@@ -1,3 +1,4 @@
+import { escapeAttr } from './dom-utils.js';
 import type { EntityConfig, TraceOnMapCardConfig } from './types.js';
 import { MAX_HOURS_TO_SHOW, MIN_HOURS_TO_SHOW } from './types.js';
 import { clampHours, clampZoom, normalizeEntityConfigs } from './utils.js';
@@ -182,14 +183,6 @@ class TraceOnMapCardEditor extends HTMLElement {
       this._update({ entities: [...entities, { entity: '' }] });
     });
   }
-}
-
-function escapeAttr(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 function themeSelected(config: TraceOnMapCardConfig, mode: string): string {

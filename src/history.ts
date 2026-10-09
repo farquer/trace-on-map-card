@@ -9,8 +9,9 @@ import { colorForEntity } from './utils.js';
 import { sanitizeCssColor } from './color.js';
 
 export function normalizeHistories(
-  data: HistoryState[][] | Record<string, HistoryState[]>
+  data: HistoryState[][] | Record<string, HistoryState[]> | null | undefined
 ): HistoryState[][] {
+  if (data == null) return [];
   return Array.isArray(data)
     ? data
     : Object.values(data as Record<string, HistoryState[]>);

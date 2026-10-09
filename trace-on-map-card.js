@@ -1,3 +1,14 @@
+function escapeHtml(s) {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+function escapeAttr(s) {
+    return escapeHtml(s).replace(/'/g, '&#39;');
+}
+
 /** Minimum Home Assistant Core version (inclusive). */
 const MIN_HA_VERSION = '2026.9.0';
 const DEFAULT_HOURS_TO_SHOW = 24;
@@ -98,11 +109,19 @@ function parseHaVersion(version) {
         return null;
     return [Number(m[1]), Number(m[2]), Number(m[3])];
 }
+/**
+ * Compare HA versions.
+ * Invalid `a` → -1; invalid `b` → 1; both invalid → 0.
+ */
 function compareHaVersions(a, b) {
     const pa = parseHaVersion(a);
     const pb = parseHaVersion(b);
-    if (!pa || !pb)
+    if (!pa && !pb)
         return 0;
+    if (!pa)
+        return -1;
+    if (!pb)
+        return 1;
     for (let i = 0; i < 3; i++) {
         if (pa[i] !== pb[i])
             return pa[i] < pb[i] ? -1 : 1;
@@ -272,13 +291,6 @@ class TraceOnMapCardEditor extends HTMLElement {
         });
     }
 }
-function escapeAttr(s) {
-    return s
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
 function themeSelected(config, mode) {
     const current = config.theme_mode ?? (config.dark_mode ? 'dark' : 'auto');
     return current === mode ? 'selected' : '';
@@ -287,33 +299,39 @@ if (!customElements.get('trace-on-map-card-editor')) {
     customElements.define('trace-on-map-card-editor', TraceOnMapCardEditor);
 }
 
-const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-const RGB_RE = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|0?\.\d+|1(?:\.0)?))?\s*\)$/i;
-/**
- * Allow only safe CSS color literals for inline styles.
- * Returns fallback when input is missing or unsafe.
- */
-function sanitizeCssColor(raw, fallback = ENTITY_COLORS[0]) {
-    if (raw == null)
-        return fallback;
-    const s = String(raw).trim();
-    if (!s || s.length > 64)
-        return fallback;
-    if (HEX_RE.test(s))
-        return s;
-    const m = s.match(RGB_RE);
-    if (m) {
-        const r = Number(m[1]);
-        const g = Number(m[2]);
-        const b = Number(m[3]);
-        if ([r, g, b].some((c) => c > 255))
-            return fallback;
-        if (m[4] !== undefined) {
-            return `rgba(${r}, ${g}, ${b}, ${m[4]})`;
-        }
-        return `rgb(${r}, ${g}, ${b})`;
+function assertEntitiesPresent(config) {
+    if (!config || !config.entities || config.entities.length === 0) {
+        throw new Error('trace-on-map-card: "entities" list is required');
     }
-    return fallback;
+}
+/** Normalize Lovelace config with defaults and clamps. */
+function normalizeCardConfig(config) {
+    assertEntitiesPresent(config);
+    return {
+        ...config,
+        auto_fit: config.auto_fit ?? true,
+        fit_zones: config.fit_zones ?? false,
+        cluster: config.cluster ?? true,
+        theme_mode: config.theme_mode ?? (config.dark_mode ? 'dark' : 'auto'),
+        hours_to_show: clampHours(config.hours_to_show ?? DEFAULT_HOURS_TO_SHOW),
+        default_zoom: clampZoom(config.default_zoom ?? DEFAULT_ZOOM),
+    };
+}
+function getCardSizeFromConfig(config) {
+    const ratio = parseAspectRatio(config?.aspect_ratio);
+    if (!ratio)
+        return 6;
+    const ar = (100 * ratio.h) / ratio.w;
+    return 1 + Math.floor(ar / 25) || 3;
+}
+function stubCardConfig() {
+    return {
+        type: 'custom:trace-on-map-card',
+        entities: [{ entity: 'device_tracker.example' }],
+        hours_to_show: DEFAULT_HOURS_TO_SHOW,
+        auto_fit: true,
+        cluster: true,
+    };
 }
 
 function isHaMapAvailable() {
@@ -420,7 +438,38 @@ function toCoordNumber(value) {
     return null;
 }
 
+const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const RGB_RE = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|0?\.\d+|1(?:\.0)?))?\s*\)$/i;
+/**
+ * Allow only safe CSS color literals for inline styles.
+ * Returns fallback when input is missing or unsafe.
+ */
+function sanitizeCssColor(raw, fallback = ENTITY_COLORS[0]) {
+    if (raw == null)
+        return fallback;
+    const s = String(raw).trim();
+    if (!s || s.length > 64)
+        return fallback;
+    if (HEX_RE.test(s))
+        return s;
+    const m = s.match(RGB_RE);
+    if (m) {
+        const r = Number(m[1]);
+        const g = Number(m[2]);
+        const b = Number(m[3]);
+        if ([r, g, b].some((c) => c > 255))
+            return fallback;
+        if (m[4] !== undefined) {
+            return `rgba(${r}, ${g}, ${b}, ${m[4]})`;
+        }
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+    return fallback;
+}
+
 function normalizeHistories(data) {
+    if (data == null)
+        return [];
     return Array.isArray(data)
         ? data
         : Object.values(data);
@@ -498,6 +547,46 @@ function shouldAutoRefetchHistory(options) {
     if (options.lastFetchedAt <= 0)
         return true;
     return options.now - options.lastFetchedAt >= interval;
+}
+
+function assignEntityColors(entities) {
+    const configs = normalizeEntityConfigs(entities);
+    const map = new Map();
+    configs.forEach((c, i) => {
+        const fallback = ENTITY_COLORS[i % ENTITY_COLORS.length];
+        map.set(c.entity, sanitizeCssColor(c.color ?? fallback, fallback));
+    });
+    return map;
+}
+function historyEntityIds(configs) {
+    return configs
+        .map((c) => c.entity)
+        .filter((id) => id.length > 0 && !isZoneEntity(id));
+}
+function buildHaMapEntities(options) {
+    const { configs, showLiveEntities, colorMap, states } = options;
+    return configs
+        .filter((c) => c.entity)
+        .filter((c) => showLiveEntities || isZoneEntity(c.entity))
+        .map((c) => ({
+        entity_id: c.entity,
+        color: sanitizeCssColor(colorMap.get(c.entity) ?? colorForEntity(c.entity, configs), ENTITY_COLORS[0]),
+        name: c.name ?? states?.[c.entity]?.attributes?.friendly_name,
+        focus: c.focus,
+        label_mode: c.label_mode,
+    }));
+}
+function legendItems(options) {
+    return options.configs
+        .filter((c) => c.entity && !isZoneEntity(c.entity))
+        .map((c) => ({
+        entity: c.entity,
+        name: c.name ??
+            options.states?.[c.entity]?.attributes?.friendly_name ??
+            c.entity,
+        color: sanitizeCssColor(options.colorMap.get(c.entity) ??
+            colorForEntity(c.entity, options.configs), ENTITY_COLORS[0]),
+    }));
 }
 
 function createHaMapElement() {
@@ -812,6 +901,7 @@ class TraceOnMapCard extends HTMLElement {
         this._historyFetchedAt = 0;
         this._fetchToken = 0;
         this._built = false;
+        this._buildGeneration = 0;
         this._resizeObserver = null;
         this._resizeTimer = null;
         this._shadow = this.attachShadow({ mode: 'open' });
@@ -820,45 +910,24 @@ class TraceOnMapCard extends HTMLElement {
         return document.createElement('trace-on-map-card-editor');
     }
     static getStubConfig() {
-        return {
-            type: 'custom:trace-on-map-card',
-            entities: [{ entity: 'device_tracker.example' }],
-            hours_to_show: DEFAULT_HOURS_TO_SHOW,
-            auto_fit: true,
-            cluster: true,
-        };
+        return stubCardConfig();
     }
     getCardSize() {
-        const ratio = parseAspectRatio(this._config?.aspect_ratio);
-        if (!ratio)
-            return 6;
-        const ar = (100 * ratio.h) / ratio.w;
-        return 1 + Math.floor(ar / 25) || 3;
+        return getCardSizeFromConfig(this._config);
     }
     setConfig(config) {
-        if (!config || !config.entities || config.entities.length === 0) {
-            throw new Error('trace-on-map-card: "entities" list is required');
-        }
-        this._config = {
-            ...config,
-            auto_fit: config.auto_fit ?? true,
-            fit_zones: config.fit_zones ?? false,
-            cluster: config.cluster ?? true,
-            theme_mode: config.theme_mode ?? (config.dark_mode ? 'dark' : 'auto'),
-            hours_to_show: clampHours(config.hours_to_show ?? DEFAULT_HOURS_TO_SHOW),
-            default_zoom: clampZoom(config.default_zoom ?? DEFAULT_ZOOM),
-        };
-        this._assignColors();
+        this._config = normalizeCardConfig(config);
+        this._entityColors = assignEntityColors(this._config.entities);
         if (this._built) {
             this._playback.pause();
             this._applyAspectRatio();
             this._renderLegend();
             this._updateTitle();
-            // History fetch will scrub to live end and refresh map — do not force full sync here.
+            void this._ensureMap();
             void this._fetchHistory();
             this._scheduleMapResize();
         }
-        else if (this.isConnected) {
+        else if (this.isConnected && this._hass) {
             void this._build();
         }
     }
@@ -869,12 +938,12 @@ class TraceOnMapCard extends HTMLElement {
             return;
         }
         if (this._built) {
+            void this._ensureMap();
             this._refreshMapFromHass();
-            const now = Date.now();
             if (shouldAutoRefetchHistory({
                 playing: this._playback.playing,
                 lastFetchedAt: this._historyFetchedAt,
-                now,
+                now: Date.now(),
             })) {
                 void this._fetchHistory();
             }
@@ -899,6 +968,7 @@ class TraceOnMapCard extends HTMLElement {
         this._playback.detach();
         this._unbindPlayback();
         this._teardownResize();
+        this._buildGeneration++;
     }
     _bindPlayback() {
         if (this._unsubscribePlayback)
@@ -911,17 +981,9 @@ class TraceOnMapCard extends HTMLElement {
         this._unsubscribePlayback?.();
         this._unsubscribePlayback = null;
     }
-    _assignColors() {
-        if (!this._config)
-            return;
-        this._entityColors.clear();
-        const configs = normalizeEntityConfigs(this._config.entities);
-        configs.forEach((c, i) => {
-            this._entityColors.set(c.entity, sanitizeCssColor(c.color ?? ENTITY_COLORS[i % ENTITY_COLORS.length], ENTITY_COLORS[i % ENTITY_COLORS.length]));
-        });
-    }
     async _build() {
-        if (this._built || !this._config)
+        // Require both config and hass so version gate / history work on first paint.
+        if (this._built || !this._config || !this._hass)
             return;
         this._built = true;
         this._shadow.innerHTML = `
@@ -964,7 +1026,17 @@ class TraceOnMapCard extends HTMLElement {
         this._renderLegend();
         this._updatePlayBtn(false);
         this._observeResize();
-        const haVersion = this._hass?.config?.version;
+        await this._ensureMap();
+        if (this._mapEl) {
+            await this._fetchHistory();
+        }
+    }
+    /** Create ha-map once version + custom element are ready (idempotent). */
+    async _ensureMap() {
+        if (this._mapEl || !this._mapWrap || !this._hass || !this._config)
+            return;
+        const generation = this._buildGeneration;
+        const haVersion = this._hass.config?.version;
         if (!isHaVersionSupported(haVersion)) {
             this._showAlert(`Requires Home Assistant Core ${MIN_HA_VERSION} or newer` +
                 (haVersion ? ` (current: ${haVersion})` : '') +
@@ -972,10 +1044,16 @@ class TraceOnMapCard extends HTMLElement {
             return;
         }
         const ok = await ensureHaMapLoaded();
+        if (generation !== this._buildGeneration || !this.isConnected) {
+            return;
+        }
+        if (this._mapEl)
+            return;
         if (!ok) {
             this._showAlert(`ha-map is not available. Requires Home Assistant Core ${MIN_HA_VERSION}+. Open a native Map card once, or upgrade HA, then reload.`);
             return;
         }
+        this._clearAlert();
         this._mapEl = createHaMapElement();
         this._mapEl.classList.add('map-el');
         this._mapWrap.appendChild(this._mapEl);
@@ -983,7 +1061,6 @@ class TraceOnMapCard extends HTMLElement {
         this._displayPaths = this._fullPaths;
         this._applyMap(this._fullPaths, true);
         this._scheduleMapResize();
-        await this._fetchHistory();
     }
     _updateTitle() {
         const titleEl = this._shadow.getElementById('title');
@@ -1044,9 +1121,6 @@ class TraceOnMapCard extends HTMLElement {
         this._alertEl.style.display = 'none';
         this._alertEl.textContent = '';
     }
-    _getEntityConfigs() {
-        return normalizeEntityConfigs(this._config?.entities ?? []);
-    }
     async _fetchHistory() {
         if (!this._hass || !this._config)
             return;
@@ -1055,9 +1129,8 @@ class TraceOnMapCard extends HTMLElement {
             this._loadingEl.style.display = '';
         const hoursToShow = clampHours(this._config.hours_to_show);
         const startTime = new Date(Date.now() - hoursToShow * 3600 * 1000);
-        const entityIdList = this._getEntityConfigs()
-            .map((e) => e.entity)
-            .filter((id) => id && !isZoneEntity(id));
+        const configs = normalizeEntityConfigs(this._config.entities);
+        const entityIdList = historyEntityIds(configs);
         if (entityIdList.length === 0) {
             if (this._loadingEl)
                 this._loadingEl.style.display = 'none';
@@ -1075,7 +1148,6 @@ class TraceOnMapCard extends HTMLElement {
             if (token !== this._fetchToken)
                 return;
             this._clearAlert();
-            const configs = this._getEntityConfigs();
             this._timelinePoints = extractTimelinePoints(data, configs);
             this._fullPaths = buildHaPaths(this._timelinePoints, configs, hoursToShow, this._entityColors);
             this._historyFetchedAt = Date.now();
@@ -1118,7 +1190,7 @@ class TraceOnMapCard extends HTMLElement {
         this._updatePlayBtn(playing);
         const hoursToShow = clampHours(this._config?.hours_to_show);
         const clipped = clipTimelineToIndex(this._timelinePoints, index);
-        const clippedPaths = buildHaPaths(clipped, this._getEntityConfigs(), hoursToShow, this._entityColors);
+        const clippedPaths = buildHaPaths(clipped, normalizeEntityConfigs(this._config?.entities ?? []), hoursToShow, this._entityColors);
         const view = resolveMapViewState({
             playing,
             timelineIndex: index,
@@ -1130,7 +1202,6 @@ class TraceOnMapCard extends HTMLElement {
         this._displayPaths = view.paths;
         this._applyMap(view.paths, view.showLiveEntities);
     }
-    /** hass updates must not replace clipped paths while scrubbing/playing. */
     _refreshMapFromHass() {
         const refresh = resolveHassMapRefresh({
             playing: this._playback.playing,
@@ -1145,7 +1216,12 @@ class TraceOnMapCard extends HTMLElement {
             return;
         applyMapProps(this._mapEl, {
             hass: this._hass,
-            entities: this._buildMapEntities(showLiveEntities),
+            entities: buildHaMapEntities({
+                configs: normalizeEntityConfigs(this._config.entities),
+                showLiveEntities,
+                colorMap: this._entityColors,
+                states: this._hass?.states,
+            }),
             paths,
             autoFit: this._config.auto_fit !== false,
             fitZones: !!this._config.fit_zones,
@@ -1154,33 +1230,16 @@ class TraceOnMapCard extends HTMLElement {
             zoom: clampZoom(this._config.default_zoom),
         });
     }
-    _buildMapEntities(showLiveEntities) {
-        const configs = this._getEntityConfigs();
-        return configs
-            .filter((c) => c.entity)
-            .filter((c) => showLiveEntities || isZoneEntity(c.entity))
-            .map((c) => ({
-            entity_id: c.entity,
-            color: sanitizeCssColor(this._entityColors.get(c.entity) ??
-                colorForEntity(c.entity, configs), ENTITY_COLORS[0]),
-            name: c.name ?? friendlyName(this._hass?.states[c.entity]),
-            focus: c.focus,
-            label_mode: c.label_mode,
-        }));
-    }
     _renderLegend() {
         if (!this._legendEl || !this._config)
             return;
-        const configs = this._getEntityConfigs().filter((c) => c.entity && !isZoneEntity(c.entity));
-        this._legendEl.innerHTML = configs
-            .map((c) => {
-            const color = sanitizeCssColor(this._entityColors.get(c.entity) ??
-                colorForEntity(c.entity, configs), ENTITY_COLORS[0]);
-            const name = c.name ??
-                friendlyName(this._hass?.states[c.entity]) ??
-                c.entity;
-            return `<div class="legend-item"><span class="legend-dot" style="background:${color}"></span>${escapeHtml(name)}</div>`;
-        })
+        const items = legendItems({
+            configs: normalizeEntityConfigs(this._config.entities),
+            colorMap: this._entityColors,
+            states: this._hass?.states,
+        });
+        this._legendEl.innerHTML = items
+            .map((item) => `<div class="legend-item"><span class="legend-dot" style="background:${item.color}"></span>${escapeHtml(item.name)}</div>`)
             .join('');
     }
     _updateTimeLabel(index) {
@@ -1200,21 +1259,11 @@ class TraceOnMapCard extends HTMLElement {
             : 'Play history animation';
     }
 }
-function friendlyName(entity) {
-    return entity?.attributes?.friendly_name;
-}
 function playIcon() {
     return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
 }
 function pauseIcon() {
     return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
-}
-function escapeHtml(s) {
-    return s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 if (!customElements.get('trace-on-map-card')) {
     customElements.define('trace-on-map-card', TraceOnMapCard);

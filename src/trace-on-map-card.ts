@@ -1,5 +1,10 @@
 import './editor.js';
-import { sanitizeCssColor } from './color.js';
+import {
+  getCardSizeFromConfig,
+  normalizeCardConfig,
+  stubCardConfig,
+} from './card-config.js';
+import { escapeHtml } from './dom-utils.js';
 import { ensureHaMapLoaded } from './ha-map-loader.js';
 import {
   buildHaPaths,
@@ -7,32 +12,28 @@ import {
   extractTimelinePoints,
 } from './history.js';
 import { buildHistoryApiPath, shouldAutoRefetchHistory } from './history-api.js';
+import {
+  assignEntityColors,
+  buildHaMapEntities,
+  historyEntityIds,
+  legendItems,
+} from './map-entities.js';
 import { applyMapProps, createHaMapElement, resizeHaMap } from './map-host.js';
 import { PlaybackController } from './playback.js';
 import type {
-  EntityConfig,
-  HaMapEntity,
   HaMapPaths,
-  HassEntity,
   HistoryState,
   HomeAssistant,
   TimelinePoint,
   TraceOnMapCardConfig,
 } from './types.js';
+import { MIN_HA_VERSION } from './types.js';
 import {
-  DEFAULT_HOURS_TO_SHOW,
-  DEFAULT_ZOOM,
-  MIN_HA_VERSION,
-} from './types.js';
-import {
-  ENTITY_COLORS,
   clampHours,
   clampZoom,
-  colorForEntity,
   formatDateTime,
   formatTime,
   isHaVersionSupported,
-  isZoneEntity,
   normalizeEntityConfigs,
   parseAspectRatio,
   resolveThemeMode,
@@ -175,6 +176,7 @@ class TraceOnMapCard extends HTMLElement {
   private _historyFetchedAt = 0;
   private _fetchToken = 0;
   private _built = false;
+  private _buildGeneration = 0;
   private _resizeObserver: ResizeObserver | null = null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -188,45 +190,25 @@ class TraceOnMapCard extends HTMLElement {
   }
 
   static getStubConfig(): Record<string, unknown> {
-    return {
-      type: 'custom:trace-on-map-card',
-      entities: [{ entity: 'device_tracker.example' }],
-      hours_to_show: DEFAULT_HOURS_TO_SHOW,
-      auto_fit: true,
-      cluster: true,
-    };
+    return stubCardConfig();
   }
 
   getCardSize(): number {
-    const ratio = parseAspectRatio(this._config?.aspect_ratio);
-    if (!ratio) return 6;
-    const ar = (100 * ratio.h) / ratio.w;
-    return 1 + Math.floor(ar / 25) || 3;
+    return getCardSizeFromConfig(this._config);
   }
 
   setConfig(config: TraceOnMapCardConfig): void {
-    if (!config || !config.entities || config.entities.length === 0) {
-      throw new Error('trace-on-map-card: "entities" list is required');
-    }
-    this._config = {
-      ...config,
-      auto_fit: config.auto_fit ?? true,
-      fit_zones: config.fit_zones ?? false,
-      cluster: config.cluster ?? true,
-      theme_mode: config.theme_mode ?? (config.dark_mode ? 'dark' : 'auto'),
-      hours_to_show: clampHours(config.hours_to_show ?? DEFAULT_HOURS_TO_SHOW),
-      default_zoom: clampZoom(config.default_zoom ?? DEFAULT_ZOOM),
-    };
-    this._assignColors();
+    this._config = normalizeCardConfig(config);
+    this._entityColors = assignEntityColors(this._config.entities);
     if (this._built) {
       this._playback.pause();
       this._applyAspectRatio();
       this._renderLegend();
       this._updateTitle();
-      // History fetch will scrub to live end and refresh map — do not force full sync here.
+      void this._ensureMap();
       void this._fetchHistory();
       this._scheduleMapResize();
-    } else if (this.isConnected) {
+    } else if (this.isConnected && this._hass) {
       void this._build();
     }
   }
@@ -238,13 +220,13 @@ class TraceOnMapCard extends HTMLElement {
       return;
     }
     if (this._built) {
+      void this._ensureMap();
       this._refreshMapFromHass();
-      const now = Date.now();
       if (
         shouldAutoRefetchHistory({
           playing: this._playback.playing,
           lastFetchedAt: this._historyFetchedAt,
-          now,
+          now: Date.now(),
         })
       ) {
         void this._fetchHistory();
@@ -273,6 +255,7 @@ class TraceOnMapCard extends HTMLElement {
     this._playback.detach();
     this._unbindPlayback();
     this._teardownResize();
+    this._buildGeneration++;
   }
 
   private _bindPlayback(): void {
@@ -287,23 +270,9 @@ class TraceOnMapCard extends HTMLElement {
     this._unsubscribePlayback = null;
   }
 
-  private _assignColors(): void {
-    if (!this._config) return;
-    this._entityColors.clear();
-    const configs = normalizeEntityConfigs(this._config.entities);
-    configs.forEach((c, i) => {
-      this._entityColors.set(
-        c.entity,
-        sanitizeCssColor(
-          c.color ?? ENTITY_COLORS[i % ENTITY_COLORS.length],
-          ENTITY_COLORS[i % ENTITY_COLORS.length]
-        )
-      );
-    });
-  }
-
   private async _build(): Promise<void> {
-    if (this._built || !this._config) return;
+    // Require both config and hass so version gate / history work on first paint.
+    if (this._built || !this._config || !this._hass) return;
     this._built = true;
 
     this._shadow.innerHTML = `
@@ -352,7 +321,18 @@ class TraceOnMapCard extends HTMLElement {
     this._updatePlayBtn(false);
     this._observeResize();
 
-    const haVersion = this._hass?.config?.version;
+    await this._ensureMap();
+    if (this._mapEl) {
+      await this._fetchHistory();
+    }
+  }
+
+  /** Create ha-map once version + custom element are ready (idempotent). */
+  private async _ensureMap(): Promise<void> {
+    if (this._mapEl || !this._mapWrap || !this._hass || !this._config) return;
+    const generation = this._buildGeneration;
+
+    const haVersion = this._hass.config?.version;
     if (!isHaVersionSupported(haVersion)) {
       this._showAlert(
         `Requires Home Assistant Core ${MIN_HA_VERSION} or newer` +
@@ -363,6 +343,11 @@ class TraceOnMapCard extends HTMLElement {
     }
 
     const ok = await ensureHaMapLoaded();
+    if (generation !== this._buildGeneration || !this.isConnected) {
+      return;
+    }
+    if (this._mapEl) return;
+
     if (!ok) {
       this._showAlert(
         `ha-map is not available. Requires Home Assistant Core ${MIN_HA_VERSION}+. Open a native Map card once, or upgrade HA, then reload.`
@@ -370,6 +355,7 @@ class TraceOnMapCard extends HTMLElement {
       return;
     }
 
+    this._clearAlert();
     this._mapEl = createHaMapElement();
     this._mapEl.classList.add('map-el');
     this._mapWrap.appendChild(this._mapEl);
@@ -377,7 +363,6 @@ class TraceOnMapCard extends HTMLElement {
     this._displayPaths = this._fullPaths;
     this._applyMap(this._fullPaths, true);
     this._scheduleMapResize();
-    await this._fetchHistory();
   }
 
   private _updateTitle(): void {
@@ -439,10 +424,6 @@ class TraceOnMapCard extends HTMLElement {
     this._alertEl.textContent = '';
   }
 
-  private _getEntityConfigs(): EntityConfig[] {
-    return normalizeEntityConfigs(this._config?.entities ?? []);
-  }
-
   private async _fetchHistory(): Promise<void> {
     if (!this._hass || !this._config) return;
     const token = ++this._fetchToken;
@@ -450,9 +431,8 @@ class TraceOnMapCard extends HTMLElement {
 
     const hoursToShow = clampHours(this._config.hours_to_show);
     const startTime = new Date(Date.now() - hoursToShow * 3600 * 1000);
-    const entityIdList = this._getEntityConfigs()
-      .map((e) => e.entity)
-      .filter((id) => id && !isZoneEntity(id));
+    const configs = normalizeEntityConfigs(this._config.entities);
+    const entityIdList = historyEntityIds(configs);
 
     if (entityIdList.length === 0) {
       if (this._loadingEl) this._loadingEl.style.display = 'none';
@@ -472,7 +452,6 @@ class TraceOnMapCard extends HTMLElement {
       if (token !== this._fetchToken) return;
 
       this._clearAlert();
-      const configs = this._getEntityConfigs();
       this._timelinePoints = extractTimelinePoints(data, configs);
       this._fullPaths = buildHaPaths(
         this._timelinePoints,
@@ -519,7 +498,7 @@ class TraceOnMapCard extends HTMLElement {
     const clipped = clipTimelineToIndex(this._timelinePoints, index);
     const clippedPaths = buildHaPaths(
       clipped,
-      this._getEntityConfigs(),
+      normalizeEntityConfigs(this._config?.entities ?? []),
       hoursToShow,
       this._entityColors
     );
@@ -537,7 +516,6 @@ class TraceOnMapCard extends HTMLElement {
     this._applyMap(view.paths, view.showLiveEntities);
   }
 
-  /** hass updates must not replace clipped paths while scrubbing/playing. */
   private _refreshMapFromHass(): void {
     const refresh = resolveHassMapRefresh({
       playing: this._playback.playing,
@@ -552,7 +530,12 @@ class TraceOnMapCard extends HTMLElement {
     if (!this._mapEl || !this._config) return;
     applyMapProps(this._mapEl, {
       hass: this._hass,
-      entities: this._buildMapEntities(showLiveEntities),
+      entities: buildHaMapEntities({
+        configs: normalizeEntityConfigs(this._config.entities),
+        showLiveEntities,
+        colorMap: this._entityColors,
+        states: this._hass?.states,
+      }),
       paths,
       autoFit: this._config.auto_fit !== false,
       fitZones: !!this._config.fit_zones,
@@ -562,42 +545,18 @@ class TraceOnMapCard extends HTMLElement {
     });
   }
 
-  private _buildMapEntities(showLiveEntities: boolean): HaMapEntity[] {
-    const configs = this._getEntityConfigs();
-    return configs
-      .filter((c) => c.entity)
-      .filter((c) => showLiveEntities || isZoneEntity(c.entity))
-      .map((c) => ({
-        entity_id: c.entity,
-        color: sanitizeCssColor(
-          this._entityColors.get(c.entity) ??
-            colorForEntity(c.entity, configs),
-          ENTITY_COLORS[0]
-        ),
-        name: c.name ?? friendlyName(this._hass?.states[c.entity]),
-        focus: c.focus,
-        label_mode: c.label_mode,
-      }));
-  }
-
   private _renderLegend(): void {
     if (!this._legendEl || !this._config) return;
-    const configs = this._getEntityConfigs().filter(
-      (c) => c.entity && !isZoneEntity(c.entity)
-    );
-    this._legendEl.innerHTML = configs
-      .map((c) => {
-        const color = sanitizeCssColor(
-          this._entityColors.get(c.entity) ??
-            colorForEntity(c.entity, configs),
-          ENTITY_COLORS[0]
-        );
-        const name =
-          c.name ??
-          friendlyName(this._hass?.states[c.entity]) ??
-          c.entity;
-        return `<div class="legend-item"><span class="legend-dot" style="background:${color}"></span>${escapeHtml(name)}</div>`;
-      })
+    const items = legendItems({
+      configs: normalizeEntityConfigs(this._config.entities),
+      colorMap: this._entityColors,
+      states: this._hass?.states,
+    });
+    this._legendEl.innerHTML = items
+      .map(
+        (item) =>
+          `<div class="legend-item"><span class="legend-dot" style="background:${item.color}"></span>${escapeHtml(item.name)}</div>`
+      )
       .join('');
   }
 
@@ -618,24 +577,12 @@ class TraceOnMapCard extends HTMLElement {
   }
 }
 
-function friendlyName(entity?: HassEntity): string | undefined {
-  return entity?.attributes?.friendly_name;
-}
-
 function playIcon(): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
 }
 
 function pauseIcon(): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 if (!customElements.get('trace-on-map-card')) {

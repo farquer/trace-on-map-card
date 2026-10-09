@@ -35,11 +35,34 @@ describe('clampHours', () => {
 describe('clampZoom', () => {
   it('defaults to 14', () => {
     expect(clampZoom(undefined)).toBe(14);
+    expect(clampZoom('nope')).toBe(14);
   });
 
   it('clamps range', () => {
     expect(clampZoom(0)).toBe(1);
     expect(clampZoom(99)).toBe(20);
+    expect(clampZoom('8')).toBe(8);
+  });
+});
+
+describe('resolveThemeMode / formatters / colorForEntity', () => {
+  it('resolves theme', async () => {
+    const { resolveThemeMode, colorForEntity, formatTime, formatDateTime, isZoneEntity } =
+      await import('../utils');
+    expect(resolveThemeMode({ type: 'x', entities: [], theme_mode: 'light' })).toBe(
+      'light'
+    );
+    expect(resolveThemeMode({ type: 'x', entities: [], dark_mode: true })).toBe(
+      'dark'
+    );
+    expect(resolveThemeMode({ type: 'x', entities: [] })).toBe('auto');
+    expect(isZoneEntity('zone.home')).toBe(true);
+    expect(isZoneEntity('person.a')).toBe(false);
+    expect(colorForEntity('a', [{ entity: 'a', color: '#abc' }])).toBe('#abc');
+    expect(typeof formatTime(new Date('2026-01-01T12:00:00Z'))).toBe('string');
+    expect(typeof formatDateTime(new Date('2026-01-01T12:00:00Z'))).toBe(
+      'string'
+    );
   });
 });
 
@@ -77,6 +100,9 @@ describe('HA version gate (>= 2026.9.0)', () => {
     expect(compareHaVersions('2026.9.0', '2026.9.0')).toBe(0);
     expect(compareHaVersions('2026.8.9', '2026.9.0')).toBe(-1);
     expect(compareHaVersions('2026.10.0', '2026.9.0')).toBe(1);
+    expect(compareHaVersions('bad', '2026.9.0')).toBe(-1);
+    expect(compareHaVersions('2026.9.0', 'bad')).toBe(1);
+    expect(compareHaVersions('bad', 'also-bad')).toBe(0);
   });
 
   it('accepts 2026.9.x and above only', () => {

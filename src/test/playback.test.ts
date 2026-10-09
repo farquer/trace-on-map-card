@@ -48,6 +48,20 @@ describe('PlaybackController', () => {
     c.destroy();
   });
 
+  it('toggle and length helpers', () => {
+    const c = new PlaybackController();
+    expect(c.length).toBe(0);
+    c.setPoints(points);
+    expect(c.length).toBe(3);
+    c.toggle();
+    expect(c.playing).toBe(true);
+    c.toggle();
+    expect(c.playing).toBe(false);
+    c.scrub(-10);
+    expect(c.index).toBe(0);
+    c.destroy();
+  });
+
   it('detach pauses but allows resubscribe (reconnect regression)', () => {
     vi.useFakeTimers();
     const c = new PlaybackController();

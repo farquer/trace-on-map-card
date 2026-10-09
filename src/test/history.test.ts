@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildHaPaths,
+  clipPointsToTime,
   clipTimelineToIndex,
   extractTimelinePoints,
   normalizeHistories,
+  timestampAtIndex,
 } from '../history';
 import type { HistoryState } from '../types';
 
@@ -43,6 +45,11 @@ describe('normalizeHistories', () => {
       'device_tracker.b': sample[1],
     };
     expect(normalizeHistories(rec)).toHaveLength(2);
+  });
+
+  it('handles null/undefined safely', () => {
+    expect(normalizeHistories(null)).toEqual([]);
+    expect(normalizeHistories(undefined)).toEqual([]);
   });
 });
 
@@ -111,16 +118,42 @@ describe('clipTimelineToIndex', () => {
 describe('buildHaPaths', () => {
   it('groups by entity', () => {
     const points = extractTimelinePoints(sample, [
-      { entity: 'device_tracker.a', name: 'A', color: '#111' },
-      { entity: 'device_tracker.b', name: 'B', color: '#222' },
+      { entity: 'device_tracker.a', name: 'A', color: '#111111' },
+      { entity: 'device_tracker.b', name: 'B', color: '#222222' },
     ]);
     const paths = buildHaPaths(points, [
-      { entity: 'device_tracker.a', name: 'A', color: '#111' },
-      { entity: 'device_tracker.b', name: 'B', color: '#222' },
+      { entity: 'device_tracker.a', name: 'A', color: '#111111' },
+      { entity: 'device_tracker.b', name: 'B', color: '#222222' },
     ], 24);
     expect(paths).toHaveLength(2);
     const a = paths.find((p) => p.name === 'A')!;
     expect(a.points).toHaveLength(2);
-    expect(a.color).toBe('#111');
+    expect(a.color).toBe('#111111');
+  });
+
+  it('sets fullDatetime when hours > 144 and sanitizes bad color', () => {
+    const points = extractTimelinePoints(sample, [
+      { entity: 'device_tracker.a', color: 'evil()' },
+    ]);
+    const paths = buildHaPaths(
+      points,
+      [{ entity: 'device_tracker.a', color: 'evil()' }],
+      200
+    );
+    expect(paths[0].fullDatetime).toBe(true);
+    expect(paths[0].color).toMatch(/^#/);
+  });
+});
+
+describe('clipPointsToTime / timestampAtIndex', () => {
+  it('clips by wall clock and reads timestamp', () => {
+    const points = extractTimelinePoints(sample, [
+      { entity: 'device_tracker.a' },
+      { entity: 'device_tracker.b' },
+    ]);
+    const t = points[1].timestamp;
+    expect(clipPointsToTime(points, t)).toHaveLength(2);
+    expect(timestampAtIndex(points, 0)).toBe(points[0].timestamp);
+    expect(timestampAtIndex([], 0)).toBeNull();
   });
 });

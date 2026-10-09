@@ -120,10 +120,16 @@ export function parseHaVersion(
   return [Number(m[1]), Number(m[2]), Number(m[3])];
 }
 
+/**
+ * Compare HA versions.
+ * Invalid `a` → -1; invalid `b` → 1; both invalid → 0.
+ */
 export function compareHaVersions(a: string, b: string): number {
   const pa = parseHaVersion(a);
   const pb = parseHaVersion(b);
-  if (!pa || !pb) return 0;
+  if (!pa && !pb) return 0;
+  if (!pa) return -1;
+  if (!pb) return 1;
   for (let i = 0; i < 3; i++) {
     if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
   }
