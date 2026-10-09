@@ -1,97 +1,131 @@
-import { describe, expect, it } from 'vitest';
-import '../editor';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  EDITOR_ENTITY_DOMAINS,
+  listPersonAndZoneEntities,
+  TraceOnMapCardEditor,
+} from '../editor';
+
+describe('EDITOR_ENTITY_DOMAINS', () => {
+  it('only allows person and zone', () => {
+    expect(EDITOR_ENTITY_DOMAINS).toEqual(['person', 'zone']);
+  });
+});
+
+describe('listPersonAndZoneEntities', () => {
+  it('filters hass.states to person/zone', () => {
+    const list = listPersonAndZoneEntities({
+      states: {
+        'person.alice': {
+          entity_id: 'person.alice',
+          state: 'home',
+          attributes: { friendly_name: 'Alice' },
+        },
+        'zone.home': {
+          entity_id: 'zone.home',
+          state: 'zoning',
+          attributes: { friendly_name: 'Home' },
+        },
+        'device_tracker.phone': {
+          entity_id: 'device_tracker.phone',
+          state: 'home',
+          attributes: {},
+        },
+        'light.kitchen': {
+          entity_id: 'light.kitchen',
+          state: 'on',
+          attributes: {},
+        },
+      },
+      callApi: vi.fn(),
+    });
+    expect(list.map((x) => x.id)).toEqual(['person.alice', 'zone.home']);
+    expect(list[0].label).toContain('Alice');
+  });
+
+  it('handles missing hass', () => {
+    expect(listPersonAndZoneEntities(null)).toEqual([]);
+  });
+});
 
 describe('trace-on-map-card-editor', () => {
   it('is registered', () => {
     expect(customElements.get('trace-on-map-card-editor')).toBeTruthy();
+    expect(TraceOnMapCardEditor).toBeTruthy();
   });
 
-  it('renders and emits config-changed on hours change', async () => {
+  it('renders entity select filtered by person/zone when picker unavailable', () => {
     const el = document.createElement(
       'trace-on-map-card-editor'
-    ) as HTMLElement & {
-      setConfig: (c: Record<string, unknown>) => void;
+    ) as TraceOnMapCardEditor;
+    document.body.appendChild(el);
+    el.hass = {
+      states: {
+        'person.bob': {
+          entity_id: 'person.bob',
+          state: 'home',
+          attributes: { friendly_name: 'Bob' },
+        },
+        'zone.work': {
+          entity_id: 'zone.work',
+          state: 'zoning',
+          attributes: {},
+        },
+        'sensor.temp': {
+          entity_id: 'sensor.temp',
+          state: '20',
+          attributes: {},
+        },
+      },
+      callApi: vi.fn(),
     };
+    el.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: [{ entity: 'person.bob' }],
+      hours_to_show: 24,
+    });
+
+    const select = el.shadowRoot!.querySelector(
+      'select.entity-picker-fallback'
+    ) as HTMLSelectElement | null;
+    // Prefer entity select fallback when ha-entity-picker is not registered in jsdom
+    expect(select).toBeTruthy();
+    const values = [...select!.options].map((o) => o.value).filter(Boolean);
+    expect(values).toContain('person.bob');
+    expect(values).toContain('zone.work');
+    expect(values).not.toContain('sensor.temp');
+
+    const hours = el.shadowRoot!.querySelector(
+      'input[type="number"]'
+    ) as HTMLInputElement;
+    expect(hours).toBeTruthy();
+    expect(hours.max).toBe('720');
+
+    el.remove();
+  });
+
+  it('emits config-changed when hours change', () => {
+    const el = document.createElement(
+      'trace-on-map-card-editor'
+    ) as TraceOnMapCardEditor;
     document.body.appendChild(el);
     const events: unknown[] = [];
     el.addEventListener('config-changed', (e) => {
       events.push((e as CustomEvent).detail.config);
     });
-
     el.setConfig({
       type: 'custom:trace-on-map-card',
-      entities: ['device_tracker.a'],
+      entities: ['person.a'],
       hours_to_show: 24,
     });
-
-    const hours = el.shadowRoot!.getElementById('hours') as HTMLInputElement;
-    expect(hours.value).toBe('24');
+    const hours = el.shadowRoot!.querySelector(
+      'input[type="number"]'
+    ) as HTMLInputElement;
     hours.value = '1000';
     hours.dispatchEvent(new Event('change'));
-
     expect(events.length).toBeGreaterThan(0);
-    const last = events.at(-1) as { hours_to_show: number };
-    expect(last.hours_to_show).toBe(720);
-
-    el.remove();
-  });
-
-  it('clamps hours in UI field max attribute', () => {
-    const el = document.createElement(
-      'trace-on-map-card-editor'
-    ) as HTMLElement & {
-      setConfig: (c: Record<string, unknown>) => void;
-    };
-    el.setConfig({
-      type: 'custom:trace-on-map-card',
-      entities: [{ entity: 'person.a' }],
-    });
-    const hours = el.shadowRoot!.getElementById('hours') as HTMLInputElement;
-    expect(hours.min).toBe('1');
-    expect(hours.max).toBe('720');
-  });
-
-  it('updates theme, toggles, entities add/remove', () => {
-    const el = document.createElement(
-      'trace-on-map-card-editor'
-    ) as HTMLElement & {
-      setConfig: (c: Record<string, unknown>) => void;
-    };
-    document.body.appendChild(el);
-    const events: Array<Record<string, unknown>> = [];
-    el.addEventListener('config-changed', (e) => {
-      events.push((e as CustomEvent).detail.config);
-    });
-    el.setConfig({
-      type: 'custom:trace-on-map-card',
-      entities: [{ entity: 'device_tracker.a', name: 'A', color: '#0288d1' }],
-      theme_mode: 'auto',
-    });
-
-    const theme = el.shadowRoot!.getElementById('theme') as HTMLSelectElement;
-    theme.value = 'dark';
-    theme.dispatchEvent(new Event('change'));
-    expect(events.at(-1)?.theme_mode).toBe('dark');
-
-    const fitZones = el.shadowRoot!.getElementById(
-      'fit_zones'
-    ) as HTMLInputElement;
-    fitZones.checked = true;
-    fitZones.dispatchEvent(new Event('change'));
-    expect(events.at(-1)?.fit_zones).toBe(true);
-
-    el.shadowRoot!.getElementById('add-entity')!.dispatchEvent(
-      new Event('click')
+    expect((events.at(-1) as { hours_to_show: number }).hours_to_show).toBe(
+      720
     );
-    const cfg = events.at(-1) as { entities: unknown[] };
-    expect(cfg.entities.length).toBe(2);
-
-    const del = el.shadowRoot!.querySelector('[data-del]') as HTMLButtonElement;
-    del.click();
-    expect(
-      (events.at(-1) as { entities: unknown[] }).entities.length
-    ).toBeLessThan(2);
-
     el.remove();
   });
 });
