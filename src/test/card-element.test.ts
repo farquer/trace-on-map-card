@@ -137,14 +137,23 @@ describe('TraceOnMapCard element', () => {
     expect(midPaths[0].points.length).toBe(1);
 
     // Scrub markers keep avatars at historical coords (not live entities)
-    expect(map.editableLocations.some((l) => l.id.startsWith('scrub:'))).toBe(
-      true
+    const scrub = map.editableLocations.find((l) =>
+      l.id.startsWith('scrub:')
     );
+    expect(scrub).toBeTruthy();
+    expect(scrub!.id).toBe('scrub:device_tracker.phone');
+    expect(scrub!.location).toEqual([1, 2]);
     expect(
       map.entities.every(
         (e) => e.entity_id === 'zone.home' || e.entity_id.startsWith('zone.')
       )
     ).toBe(true);
+
+    // Mid scrub: move to second point
+    slider.value = '1';
+    slider.dispatchEvent(new Event('input'));
+    expect(map.editableLocations[0].location).toEqual([1.1, 2.1]);
+    expect(map.paths[0].points.length).toBe(2);
 
     // hass tick must not restore full path while scrubbing
     card.hass = {
@@ -153,8 +162,16 @@ describe('TraceOnMapCard element', () => {
         ...(card.hass as { states: object }).states,
       },
     };
-    expect(map.paths[0].points.length).toBe(1);
-    expect(map.editableLocations.length).toBeGreaterThan(0);
+    expect(map.paths[0].points.length).toBe(2);
+    expect(map.editableLocations[0].location).toEqual([1.1, 2.1]);
+
+    // Live end clears scrub avatars and restores live entities
+    slider.value = String(slider.max);
+    slider.dispatchEvent(new Event('input'));
+    expect(map.editableLocations).toEqual([]);
+    expect(
+      map.entities.some((e) => e.entity_id === 'device_tracker.phone')
+    ).toBe(true);
 
     // reconnect
     card.remove();

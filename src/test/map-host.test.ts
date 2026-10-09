@@ -33,6 +33,32 @@ describe('map-host', () => {
     expect(map.themeMode).toBe('dark');
     expect(map.zoom).toBe(12);
     expect(map.editableLocations).toEqual([]);
+    const marker = document.createElement('div');
+    applyMapProps(el, {
+      hass,
+      entities: [],
+      paths: [],
+      editableLocations: [
+        {
+          id: 'scrub:person.a',
+          location: [1, 2],
+          element: marker,
+          elementSize: [48, 56],
+          locationEditable: false,
+          radiusEditable: false,
+          fit: false,
+        },
+      ],
+      autoFit: true,
+      fitZones: true,
+      cluster: false,
+      themeMode: 'dark',
+      zoom: 12,
+    });
+    expect(map.editableLocations).toHaveLength(1);
+    expect(
+      (map.editableLocations as Array<{ id: string }>)[0].id
+    ).toBe('scrub:person.a');
     expect(el.hasAttribute('auto-fit')).toBe(true);
     expect(el.hasAttribute('fit-zones')).toBe(true);
     expect(el.hasAttribute('cluster-markers')).toBe(false);

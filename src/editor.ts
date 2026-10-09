@@ -139,13 +139,25 @@ class TraceOnMapCardEditor extends HTMLElement {
   }
 
   set hass(hass: HomeAssistant) {
+    const hadStates =
+      !!this._hass?.states && Object.keys(this._hass.states).length > 0;
     this._hass = hass;
-    // Update pickers in place — avoid full re-render while dropdown is open.
-    this._shadow
-      .querySelectorAll('ha-entity-picker, ha-selector')
-      .forEach((el) => {
+    // Update HA pickers in place — avoid full re-render while dropdown is open.
+    const pickers = this._shadow.querySelectorAll(
+      'ha-entity-picker, ha-selector'
+    );
+    if (pickers.length > 0) {
+      pickers.forEach((el) => {
         (el as HTMLElement & { hass: HomeAssistant }).hass = hass;
       });
+      return;
+    }
+    // Fallback <select> options come from hass.states. Lovelace often calls
+    // setConfig before hass; re-render once when states first appear.
+    const hasStates = !!hass?.states && Object.keys(hass.states).length > 0;
+    if (this._config && !hadStates && hasStates) {
+      this._render();
+    }
   }
 
   get hass(): HomeAssistant | null {
@@ -404,31 +416,35 @@ class TraceOnMapCardEditor extends HTMLElement {
     row.className = 'entity-row';
 
     const domains = [...EDITOR_ENTITY_DOMAINS];
-    const picker = this._canUseHaEntityPicker()
-      ? (document.createElement('ha-entity-picker') as HTMLElement & {
-          hass?: HomeAssistant;
-          value?: string;
-          label?: string;
-          includeDomains?: string[];
-        })
-      : this._isElementAvailable('ha-selector')
-        ? (document.createElement('ha-selector') as HTMLElement & {
-            hass?: HomeAssistant;
-            value?: string;
-            label?: string;
-            selector?: { entity: { domain: string[] } };
-          })
-        : null;
+    let picker: HTMLElement | null = null;
+
+    if (this._canUseHaEntityPicker()) {
+      const entityPicker = document.createElement(
+        'ha-entity-picker'
+      ) as HTMLElement & {
+        hass?: HomeAssistant;
+        value?: string;
+        label?: string;
+        includeDomains?: string[];
+      };
+      entityPicker.value = ec.entity ?? '';
+      entityPicker.includeDomains = domains;
+      if (this._hass) entityPicker.hass = this._hass;
+      picker = entityPicker;
+    } else if (this._isElementAvailable('ha-selector')) {
+      const selector = document.createElement('ha-selector') as HTMLElement & {
+        hass?: HomeAssistant;
+        value?: string;
+        label?: string;
+        selector?: { entity: { domain: string[] } };
+      };
+      selector.value = ec.entity ?? '';
+      selector.selector = { entity: { domain: domains } };
+      if (this._hass) selector.hass = this._hass;
+      picker = selector;
+    }
 
     if (picker) {
-      picker.value = ec.entity ?? '';
-      if ('includeDomains' in picker) {
-        picker.includeDomains = domains;
-      }
-      if ('selector' in picker) {
-        picker.selector = { entity: { domain: domains } };
-      }
-      if (this._hass) picker.hass = this._hass;
       picker.addEventListener('value-changed', (e: Event) => {
         const newVal = (e as CustomEvent<{ value: string }>).detail?.value ?? '';
         const updated = [...allEntities];
@@ -515,15 +531,9 @@ export function listPersonAndZoneEntities(
   hass: HomeAssistant | null | undefined
 ): Array<{ id: string; label: string }> {
   if (!hass?.states) return [];
+  const allowed = new Set<string>(EDITOR_ENTITY_DOMAINS);
   return Object.keys(hass.states)
-    .filter((id) => {
-      const domain = id.split('.')[0];
-      return (
-        domain === 'person' ||
-        domain === 'zone' ||
-        (EDITOR_ENTITY_DOMAINS as readonly string[]).includes(domain)
-      );
-    })
+    .filter((id) => allowed.has(id.split('.')[0] ?? ''))
     .sort()
     .map((id) => ({
       id,

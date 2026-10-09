@@ -245,13 +245,22 @@ class TraceOnMapCardEditor extends HTMLElement {
         this._ensurePickerLoaded();
     }
     set hass(hass) {
+        const hadStates = !!this._hass?.states && Object.keys(this._hass.states).length > 0;
         this._hass = hass;
-        // Update pickers in place — avoid full re-render while dropdown is open.
-        this._shadow
-            .querySelectorAll('ha-entity-picker, ha-selector')
-            .forEach((el) => {
-            el.hass = hass;
-        });
+        // Update HA pickers in place — avoid full re-render while dropdown is open.
+        const pickers = this._shadow.querySelectorAll('ha-entity-picker, ha-selector');
+        if (pickers.length > 0) {
+            pickers.forEach((el) => {
+                el.hass = hass;
+            });
+            return;
+        }
+        // Fallback <select> options come from hass.states. Lovelace often calls
+        // setConfig before hass; re-render once when states first appear.
+        const hasStates = !!hass?.states && Object.keys(hass.states).length > 0;
+        if (this._config && !hadStates && hasStates) {
+            this._render();
+        }
     }
     get hass() {
         return this._hass;
@@ -433,21 +442,24 @@ class TraceOnMapCardEditor extends HTMLElement {
         const row = document.createElement('div');
         row.className = 'entity-row';
         const domains = [...EDITOR_ENTITY_DOMAINS];
-        const picker = this._canUseHaEntityPicker()
-            ? document.createElement('ha-entity-picker')
-            : this._isElementAvailable('ha-selector')
-                ? document.createElement('ha-selector')
-                : null;
-        if (picker) {
-            picker.value = ec.entity ?? '';
-            if ('includeDomains' in picker) {
-                picker.includeDomains = domains;
-            }
-            if ('selector' in picker) {
-                picker.selector = { entity: { domain: domains } };
-            }
+        let picker = null;
+        if (this._canUseHaEntityPicker()) {
+            const entityPicker = document.createElement('ha-entity-picker');
+            entityPicker.value = ec.entity ?? '';
+            entityPicker.includeDomains = domains;
             if (this._hass)
-                picker.hass = this._hass;
+                entityPicker.hass = this._hass;
+            picker = entityPicker;
+        }
+        else if (this._isElementAvailable('ha-selector')) {
+            const selector = document.createElement('ha-selector');
+            selector.value = ec.entity ?? '';
+            selector.selector = { entity: { domain: domains } };
+            if (this._hass)
+                selector.hass = this._hass;
+            picker = selector;
+        }
+        if (picker) {
             picker.addEventListener('value-changed', (e) => {
                 const newVal = e.detail?.value ?? '';
                 const updated = [...allEntities];
@@ -533,13 +545,9 @@ TraceOnMapCardEditor.PICKER_POLL_INTERVAL_MS = 100;
 function listPersonAndZoneEntities(hass) {
     if (!hass?.states)
         return [];
+    const allowed = new Set(EDITOR_ENTITY_DOMAINS);
     return Object.keys(hass.states)
-        .filter((id) => {
-        const domain = id.split('.')[0];
-        return (domain === 'person' ||
-            domain === 'zone' ||
-            EDITOR_ENTITY_DOMAINS.includes(domain));
-    })
+        .filter((id) => allowed.has(id.split('.')[0] ?? ''))
         .sort()
         .map((id) => ({
         id,
