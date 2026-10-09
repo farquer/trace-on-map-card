@@ -1,5 +1,7 @@
 # Trace on Map Card
 
+本项目参考自 [piotrmilcarz/historymapcard](https://github.com/piotrmilcarz/historymapcard)，经过AI魔改，感谢作者。
+
 Home Assistant Lovelace card：在 **HA 默认地图**上展示实体位置历史，并支持时间轴播放 / 拖动。
 
 地图完全使用前端自带的 `ha-map`。若你通过 `frontend.extra_module_url` 等方式替换了默认地图瓦片，本卡片会自动跟随，无需也不应在本卡片中配置任何第三方地图。
