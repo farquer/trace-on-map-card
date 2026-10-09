@@ -609,6 +609,7 @@ function applyMapProps(el, props) {
     }
     map.entities = props.entities;
     map.paths = props.paths;
+    map.editableLocations = props.editableLocations ?? [];
     map.autoFit = props.autoFit;
     map.fitZones = props.fitZones;
     map.clusterMarkers = props.cluster;
@@ -730,6 +731,116 @@ class PlaybackController {
     }
 }
 
+/** Last known position per entity up to timeline index (inclusive). */
+function positionsAtTimelineIndex(points, index) {
+    const clipped = clipTimelineToIndex(points, index);
+    const map = new Map();
+    for (const p of clipped) {
+        map.set(p.entityId, { lat: p.lat, lng: p.lng });
+    }
+    return map;
+}
+function initialsFromName(name) {
+    return name
+        .split(/\s+/)
+        .map((part) => part[0] ?? '')
+        .join('')
+        .slice(0, 3)
+        .toUpperCase();
+}
+function resolveEntityPictureUrl(picture, hassUrl) {
+    if (typeof picture !== 'string' || !picture)
+        return '';
+    try {
+        return hassUrl ? hassUrl(picture) : picture;
+    }
+    catch {
+        return picture;
+    }
+}
+/**
+ * Build / update a floating avatar marker element for historical scrub.
+ * Prefers HA's ha-entity-marker when available.
+ */
+function ensureAvatarMarkerElement(cache, options) {
+    let el = cache.get(options.entityId);
+    if (!el) {
+        if (typeof customElements !== 'undefined' && customElements.get('ha-entity-marker')) {
+            el = document.createElement('ha-entity-marker');
+        }
+        else {
+            el = document.createElement('div');
+            el.className = 'trace-scrub-marker';
+        }
+        cache.set(options.entityId, el);
+    }
+    if (el.localName === 'ha-entity-marker') {
+        const marker = el;
+        marker.entityId = options.entityId;
+        marker.entityName = initialsFromName(options.name) || '?';
+        marker.entityPicture = options.pictureUrl;
+        marker.entityColor = options.color;
+        marker.floating = true;
+        marker.showIcon = false;
+        return el;
+    }
+    // Fallback DOM avatar (when ha-entity-marker is not registered yet)
+    el.style.cssText = [
+        'width:40px',
+        'height:40px',
+        'border-radius:50%',
+        `border:2px solid ${options.color}`,
+        'box-shadow:0 1px 4px rgba(0,0,0,.35)',
+        'background-size:cover',
+        'background-position:center',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'font:600 12px/1 sans-serif',
+        'color:#fff',
+        `background-color:${options.color}`,
+    ].join(';');
+    if (options.pictureUrl) {
+        el.style.backgroundImage = `url("${options.pictureUrl.replace(/"/g, '\\"')}")`;
+        el.textContent = '';
+    }
+    else {
+        el.style.backgroundImage = '';
+        el.textContent = initialsFromName(options.name) || '?';
+    }
+    return el;
+}
+function buildScrubEditableLocations(options) {
+    const result = [];
+    for (const [entityId, pos] of options.positions) {
+        const state = options.states?.[entityId];
+        const name = options.names.get(entityId) ??
+            state?.attributes?.friendly_name ??
+            entityId;
+        const color = options.colors.get(entityId) ?? '#0288d1';
+        const pictureUrl = resolveEntityPictureUrl(state?.attributes?.entity_picture, options.hassUrl);
+        const element = ensureAvatarMarkerElement(options.elementCache, {
+            entityId,
+            name,
+            color,
+            pictureUrl,
+        });
+        result.push({
+            id: `scrub:${entityId}`,
+            location: [pos.lat, pos.lng],
+            element,
+            // Match floating ha-entity-marker footprint roughly
+            elementSize: [48, 56],
+            title: name,
+            color,
+            locationEditable: false,
+            radiusEditable: false,
+            fit: false,
+        });
+    }
+    return result;
+}
+
 /**
  * Decide what the map should show for playback / scrub / live.
  * hass updates must reuse this so they never replace clipped paths mid-scrub.
@@ -748,12 +859,14 @@ function resolveMapViewState(input) {
     if (isLive) {
         return {
             paths: fullPaths,
+            // Live markers come from hass.states (with entity pictures).
             showLiveEntities: true,
             isLive: true,
         };
     }
     return {
         paths: clippedPaths,
+        // Hide live markers (they'd stay at "now"); scrub avatars use editableLocations.
         showLiveEntities: false,
         isLive: false,
     };
@@ -895,7 +1008,9 @@ class TraceOnMapCard extends HTMLElement {
         this._fullPaths = [];
         this._displayPaths = [];
         this._isLiveView = true;
+        this._playbackIndex = 0;
         this._entityColors = new Map();
+        this._scrubMarkerEls = new Map();
         this._playback = new PlaybackController();
         this._unsubscribePlayback = null;
         this._historyFetchedAt = 0;
@@ -1188,6 +1303,7 @@ class TraceOnMapCard extends HTMLElement {
             this._sliderEl.value = String(index);
         this._updateTimeLabel(index);
         this._updatePlayBtn(playing);
+        this._playbackIndex = index;
         const hoursToShow = clampHours(this._config?.hours_to_show);
         const clipped = clipTimelineToIndex(this._timelinePoints, index);
         const clippedPaths = buildHaPaths(clipped, normalizeEntityConfigs(this._config?.entities ?? []), hoursToShow, this._entityColors);
@@ -1200,7 +1316,7 @@ class TraceOnMapCard extends HTMLElement {
         });
         this._isLiveView = view.isLive;
         this._displayPaths = view.paths;
-        this._applyMap(view.paths, view.showLiveEntities);
+        this._applyMap(view.paths, view.showLiveEntities, view.isLive);
     }
     _refreshMapFromHass() {
         const refresh = resolveHassMapRefresh({
@@ -1209,20 +1325,39 @@ class TraceOnMapCard extends HTMLElement {
             displayPaths: this._displayPaths,
             fullPaths: this._fullPaths,
         });
-        this._applyMap(refresh.paths, refresh.showLiveEntities);
+        this._applyMap(refresh.paths, refresh.showLiveEntities, this._isLiveView);
     }
-    _applyMap(paths, showLiveEntities) {
+    _applyMap(paths, showLiveEntities, isLive = showLiveEntities) {
         if (!this._mapEl || !this._config)
             return;
+        const configs = normalizeEntityConfigs(this._config.entities);
+        const editableLocations = isLive
+            ? []
+            : buildScrubEditableLocations({
+                positions: positionsAtTimelineIndex(this._timelinePoints, this._playbackIndex),
+                names: new Map(configs
+                    .filter((c) => c.entity)
+                    .map((c) => [
+                    c.entity,
+                    c.name ??
+                        this._hass?.states[c.entity]?.attributes?.friendly_name ??
+                        c.entity,
+                ])),
+                colors: this._entityColors,
+                states: this._hass?.states,
+                hassUrl: this._hass?.hassUrl?.bind(this._hass),
+                elementCache: this._scrubMarkerEls,
+            });
         applyMapProps(this._mapEl, {
             hass: this._hass,
             entities: buildHaMapEntities({
-                configs: normalizeEntityConfigs(this._config.entities),
+                configs,
                 showLiveEntities,
                 colorMap: this._entityColors,
                 states: this._hass?.states,
             }),
             paths,
+            editableLocations,
             autoFit: this._config.auto_fit !== false,
             fitZones: !!this._config.fit_zones,
             cluster: this._config.cluster !== false,

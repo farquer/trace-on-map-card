@@ -39,6 +39,7 @@ export function resolveMapViewState(input: MapViewStateInput): MapViewState {
   if (isLive) {
     return {
       paths: fullPaths,
+      // Live markers come from hass.states (with entity pictures).
       showLiveEntities: true,
       isLive: true,
     };
@@ -46,6 +47,7 @@ export function resolveMapViewState(input: MapViewStateInput): MapViewState {
 
   return {
     paths: clippedPaths,
+    // Hide live markers (they'd stay at "now"); scrub avatars use editableLocations.
     showLiveEntities: false,
     isLive: false,
   };

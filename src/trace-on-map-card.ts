@@ -20,6 +20,10 @@ import {
 } from './map-entities.js';
 import { applyMapProps, createHaMapElement, resizeHaMap } from './map-host.js';
 import { PlaybackController } from './playback.js';
+import {
+  buildScrubEditableLocations,
+  positionsAtTimelineIndex,
+} from './scrub-markers.js';
 import type {
   HaMapPaths,
   HistoryState,
@@ -170,7 +174,9 @@ class TraceOnMapCard extends HTMLElement {
   private _fullPaths: HaMapPaths[] = [];
   private _displayPaths: HaMapPaths[] = [];
   private _isLiveView = true;
+  private _playbackIndex = 0;
   private _entityColors = new Map<string, string>();
+  private _scrubMarkerEls = new Map<string, HTMLElement>();
   private _playback = new PlaybackController();
   private _unsubscribePlayback: (() => void) | null = null;
   private _historyFetchedAt = 0;
@@ -493,6 +499,7 @@ class TraceOnMapCard extends HTMLElement {
     if (this._sliderEl) this._sliderEl.value = String(index);
     this._updateTimeLabel(index);
     this._updatePlayBtn(playing);
+    this._playbackIndex = index;
 
     const hoursToShow = clampHours(this._config?.hours_to_show);
     const clipped = clipTimelineToIndex(this._timelinePoints, index);
@@ -513,7 +520,7 @@ class TraceOnMapCard extends HTMLElement {
 
     this._isLiveView = view.isLive;
     this._displayPaths = view.paths;
-    this._applyMap(view.paths, view.showLiveEntities);
+    this._applyMap(view.paths, view.showLiveEntities, view.isLive);
   }
 
   private _refreshMapFromHass(): void {
@@ -523,20 +530,49 @@ class TraceOnMapCard extends HTMLElement {
       displayPaths: this._displayPaths,
       fullPaths: this._fullPaths,
     });
-    this._applyMap(refresh.paths, refresh.showLiveEntities);
+    this._applyMap(refresh.paths, refresh.showLiveEntities, this._isLiveView);
   }
 
-  private _applyMap(paths: HaMapPaths[], showLiveEntities: boolean): void {
+  private _applyMap(
+    paths: HaMapPaths[],
+    showLiveEntities: boolean,
+    isLive: boolean = showLiveEntities
+  ): void {
     if (!this._mapEl || !this._config) return;
+    const configs = normalizeEntityConfigs(this._config.entities);
+    const editableLocations = isLive
+      ? []
+      : buildScrubEditableLocations({
+          positions: positionsAtTimelineIndex(
+            this._timelinePoints,
+            this._playbackIndex
+          ),
+          names: new Map(
+            configs
+              .filter((c) => c.entity)
+              .map((c) => [
+                c.entity,
+                c.name ??
+                  this._hass?.states[c.entity]?.attributes?.friendly_name ??
+                  c.entity,
+              ])
+          ),
+          colors: this._entityColors,
+          states: this._hass?.states,
+          hassUrl: this._hass?.hassUrl?.bind(this._hass),
+          elementCache: this._scrubMarkerEls,
+        });
+
     applyMapProps(this._mapEl, {
       hass: this._hass,
       entities: buildHaMapEntities({
-        configs: normalizeEntityConfigs(this._config.entities),
+        configs,
         showLiveEntities,
         colorMap: this._entityColors,
         states: this._hass?.states,
       }),
       paths,
+      editableLocations,
       autoFit: this._config.auto_fit !== false,
       fitZones: !!this._config.fit_zones,
       cluster: this._config.cluster !== false,

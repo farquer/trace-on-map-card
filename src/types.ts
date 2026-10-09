@@ -19,6 +19,7 @@ export interface HomeAssistant {
     version?: string;
     [key: string]: unknown;
   };
+  hassUrl?: (path: string) => string;
   callApi: <T>(
     method: 'GET' | 'POST',
     path: string,

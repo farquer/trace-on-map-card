@@ -1,10 +1,13 @@
 import { notifyHaMapResize } from './ha-map-loader.js';
+import type { ScrubEditableLocation } from './scrub-markers.js';
 import type { HaMapEntity, HaMapPaths, HomeAssistant, ThemeMode } from './types.js';
 
 export interface HaMapProps {
   hass: HomeAssistant | null;
   entities: HaMapEntity[];
   paths: HaMapPaths[];
+  /** Historical scrub/play avatars at timeline positions (ha-map editableLocations). */
+  editableLocations?: ScrubEditableLocation[];
   autoFit: boolean;
   fitZones: boolean;
   cluster: boolean;
@@ -34,6 +37,7 @@ export function applyMapProps(el: HTMLElement, props: HaMapProps): void {
 
   map.entities = props.entities;
   map.paths = props.paths;
+  map.editableLocations = props.editableLocations ?? [];
   map.autoFit = props.autoFit;
   map.fitZones = props.fitZones;
   map.clusterMarkers = props.cluster;

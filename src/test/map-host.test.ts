@@ -32,6 +32,7 @@ describe('map-host', () => {
     expect(map.clusterMarkers).toBe(false);
     expect(map.themeMode).toBe('dark');
     expect(map.zoom).toBe(12);
+    expect(map.editableLocations).toEqual([]);
     expect(el.hasAttribute('auto-fit')).toBe(true);
     expect(el.hasAttribute('fit-zones')).toBe(true);
     expect(el.hasAttribute('cluster-markers')).toBe(false);

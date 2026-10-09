@@ -131,9 +131,20 @@ describe('TraceOnMapCard element', () => {
     const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
       paths: Array<{ points: unknown[] }>;
       entities: Array<{ entity_id: string }>;
+      editableLocations: Array<{ id: string; location: [number, number] }>;
     };
     const midPaths = map.paths;
     expect(midPaths[0].points.length).toBe(1);
+
+    // Scrub markers keep avatars at historical coords (not live entities)
+    expect(map.editableLocations.some((l) => l.id.startsWith('scrub:'))).toBe(
+      true
+    );
+    expect(
+      map.entities.every(
+        (e) => e.entity_id === 'zone.home' || e.entity_id.startsWith('zone.')
+      )
+    ).toBe(true);
 
     // hass tick must not restore full path while scrubbing
     card.hass = {
@@ -143,9 +154,7 @@ describe('TraceOnMapCard element', () => {
       },
     };
     expect(map.paths[0].points.length).toBe(1);
-    expect(map.entities.every((e) => e.entity_id === 'zone.home' || e.entity_id.startsWith('zone.'))).toBe(
-      true
-    );
+    expect(map.editableLocations.length).toBeGreaterThan(0);
 
     // reconnect
     card.remove();
