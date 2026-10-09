@@ -75,9 +75,15 @@ export class PlaybackController {
     this._emit();
   }
 
+  /** Pause and drop listeners (hard teardown). Prefer pause + unsubscribe for reconnect. */
   destroy(): void {
     this.pause();
     this._listeners.clear();
+  }
+
+  /** Soft stop for card disconnect — keeps controller reusable after resubscribe. */
+  detach(): void {
+    this.pause();
   }
 
   private _scheduleNext(): void {

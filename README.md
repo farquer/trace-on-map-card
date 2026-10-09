@@ -8,6 +8,7 @@ Home Assistant Lovelace card：在 **HA 默认地图**上展示实体位置历�
 
 - **Home Assistant Core ≥ 2026.9.0**（2026.9.x 及以上）
 - 低于该版本时卡片会提示升级，不会加载地图
+- 卡片通过 HA 前端的 `ha-map` 渲染；若尚未注册，会尝试 `loadCardHelpers` 探测加载原生 Map card 依赖
 
 ## 功能
 

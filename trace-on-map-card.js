@@ -287,6 +287,139 @@ if (!customElements.get('trace-on-map-card-editor')) {
     customElements.define('trace-on-map-card-editor', TraceOnMapCardEditor);
 }
 
+const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const RGB_RE = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|0?\.\d+|1(?:\.0)?))?\s*\)$/i;
+/**
+ * Allow only safe CSS color literals for inline styles.
+ * Returns fallback when input is missing or unsafe.
+ */
+function sanitizeCssColor(raw, fallback = ENTITY_COLORS[0]) {
+    if (raw == null)
+        return fallback;
+    const s = String(raw).trim();
+    if (!s || s.length > 64)
+        return fallback;
+    if (HEX_RE.test(s))
+        return s;
+    const m = s.match(RGB_RE);
+    if (m) {
+        const r = Number(m[1]);
+        const g = Number(m[2]);
+        const b = Number(m[3]);
+        if ([r, g, b].some((c) => c > 255))
+            return fallback;
+        if (m[4] !== undefined) {
+            return `rgba(${r}, ${g}, ${b}, ${m[4]})`;
+        }
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+    return fallback;
+}
+
+function isHaMapAvailable() {
+    return typeof customElements !== 'undefined' && !!customElements.get('ha-map');
+}
+/**
+ * Ensure `ha-map` is registered. Tries loadCardHelpers + probe map card when lazy-loaded.
+ */
+async function ensureHaMapLoaded(timeoutMs = 10000, deps = {}) {
+    const isAvailable = deps.isAvailable ?? isHaMapAvailable;
+    if (isAvailable())
+        return true;
+    const loadHelpers = deps.loadHelpers ??
+        (async () => {
+            try {
+                return await window.loadCardHelpers?.();
+            }
+            catch {
+                return undefined;
+            }
+        });
+    try {
+        const helpers = await loadHelpers();
+        if (helpers?.createCardElement) {
+            try {
+                await helpers.createCardElement({
+                    type: 'map',
+                    entities: [],
+                    hours_to_show: 0,
+                });
+            }
+            catch {
+                // Probe may throw on empty entities; registration may still succeed.
+            }
+        }
+    }
+    catch {
+        /* ignore */
+    }
+    if (isAvailable())
+        return true;
+    const whenDefined = deps.whenDefined ??
+        ((name) => customElements.whenDefined(name));
+    try {
+        await Promise.race([
+            whenDefined('ha-map'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+        ]);
+    }
+    catch {
+        /* timeout or missing */
+    }
+    return isAvailable();
+}
+/** Best-effort resize / relayout after container size changes. */
+function notifyHaMapResize(el) {
+    if (!el)
+        return;
+    const map = el;
+    try {
+        map.fitMap?.();
+    }
+    catch {
+        /* ignore */
+    }
+    try {
+        map.invalidateSize?.();
+    }
+    catch {
+        /* ignore */
+    }
+    try {
+        map.resize?.();
+    }
+    catch {
+        /* ignore */
+    }
+    try {
+        map.requestUpdate?.();
+    }
+    catch {
+        /* ignore */
+    }
+    try {
+        window.dispatchEvent(new Event('resize'));
+    }
+    catch {
+        /* ignore */
+    }
+}
+
+/** Coerce history / attribute coordinates to finite numbers (accepts numeric strings). */
+function toCoordNumber(value) {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed)
+            return null;
+        const n = Number(trimmed);
+        return Number.isFinite(n) ? n : null;
+    }
+    return null;
+}
+
 function normalizeHistories(data) {
     return Array.isArray(data)
         ? data
@@ -303,11 +436,9 @@ function extractTimelinePoints(data, entityConfigs) {
         if (!entityId)
             return;
         entityHistory.forEach((state) => {
-            const lat = state.attributes?.latitude;
-            const lng = state.attributes?.longitude;
+            const lat = toCoordNumber(state.attributes?.latitude);
+            const lng = toCoordNumber(state.attributes?.longitude);
             if (lat == null || lng == null)
-                return;
-            if (typeof lat !== 'number' || typeof lng !== 'number')
                 return;
             const ts = new Date(state.last_updated ?? state.last_changed).getTime();
             if (!Number.isFinite(ts))
@@ -330,13 +461,14 @@ function buildHaPaths(points, entityConfigs, hoursToShow, colorMap) {
         if (entityPoints.length === 0)
             continue;
         const cfg = entityConfigs.find((c) => c.entity === entityId);
+        const rawColor = colorForEntity(entityId, entityConfigs, colorMap);
         paths.push({
             points: entityPoints.map((p) => ({
                 point: [p.lat, p.lng],
                 timestamp: new Date(p.timestamp),
             })),
             name: cfg?.name ?? entityId,
-            color: colorForEntity(entityId, entityConfigs, colorMap),
+            color: sanitizeCssColor(rawColor),
             gradualOpacity: 0.8,
             fullDatetime: hoursToShow > 144,
         });
@@ -351,25 +483,23 @@ function clipTimelineToIndex(points, upToIndex) {
     return points.slice(0, end + 1);
 }
 
-function isHaMapAvailable() {
-    return typeof customElements !== 'undefined' && !!customElements.get('ha-map');
+/** Build HA history/period path with encoded entity ids. */
+function buildHistoryApiPath(startTime, entityIds) {
+    const filtered = entityIds.filter((id) => id.length > 0);
+    const encoded = filtered.map((id) => encodeURIComponent(id)).join(',');
+    return (`history/period/${startTime.toISOString()}` +
+        `?filter_entity_id=${encoded}` +
+        `&significant_changes_only=0`);
 }
-async function whenHaMapDefined(timeoutMs = 10000) {
-    if (isHaMapAvailable())
-        return true;
-    if (typeof customElements === 'undefined')
+function shouldAutoRefetchHistory(options) {
+    if (options.playing)
         return false;
-    try {
-        await Promise.race([
-            customElements.whenDefined('ha-map'),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
-        ]);
+    const interval = options.intervalMs ?? 60000;
+    if (options.lastFetchedAt <= 0)
         return true;
-    }
-    catch {
-        return isHaMapAvailable();
-    }
+    return options.now - options.lastFetchedAt >= interval;
 }
+
 function createHaMapElement() {
     const el = document.createElement('ha-map');
     el.style.width = '100%';
@@ -379,7 +509,7 @@ function createHaMapElement() {
 }
 function applyMapProps(el, props) {
     const map = el;
-    // HA 2026.9+ ha-map primarily uses Lit contexts; set .hass when present for compat.
+    // HA 2026.9+ ha-map uses Lit contexts for states; still set .hass when accepted.
     if (props.hass) {
         try {
             map.hass = props.hass;
@@ -395,7 +525,6 @@ function applyMapProps(el, props) {
     map.clusterMarkers = props.cluster;
     map.themeMode = props.themeMode;
     map.zoom = props.zoom;
-    // Attribute mirrors for boolean/string props used by some HA builds
     if (props.autoFit)
         el.setAttribute('auto-fit', '');
     else
@@ -409,6 +538,9 @@ function applyMapProps(el, props) {
     else
         el.removeAttribute('cluster-markers');
     el.setAttribute('theme-mode', props.themeMode);
+}
+function resizeHaMap(el) {
+    notifyHaMapResize(el);
 }
 
 class PlaybackController {
@@ -473,9 +605,14 @@ class PlaybackController {
         }
         this._emit();
     }
+    /** Pause and drop listeners (hard teardown). Prefer pause + unsubscribe for reconnect. */
     destroy() {
         this.pause();
         this._listeners.clear();
+    }
+    /** Soft stop for card disconnect — keeps controller reusable after resubscribe. */
+    detach() {
+        this.pause();
     }
     _scheduleNext() {
         if (!this._playing)
@@ -502,6 +639,48 @@ class PlaybackController {
             listener(this._index, this._playing);
         }
     }
+}
+
+/**
+ * Decide what the map should show for playback / scrub / live.
+ * hass updates must reuse this so they never replace clipped paths mid-scrub.
+ */
+function resolveMapViewState(input) {
+    const { playing, timelineIndex, timelineLength, fullPaths, clippedPaths } = input;
+    if (timelineLength === 0) {
+        return {
+            paths: fullPaths,
+            showLiveEntities: true,
+            isLive: true,
+        };
+    }
+    const atEnd = timelineIndex >= timelineLength - 1;
+    const isLive = atEnd && !playing;
+    if (isLive) {
+        return {
+            paths: fullPaths,
+            showLiveEntities: true,
+            isLive: true,
+        };
+    }
+    return {
+        paths: clippedPaths,
+        showLiveEntities: false,
+        isLive: false,
+    };
+}
+/** What hass setter should apply without destroying historical scrub/play view. */
+function resolveHassMapRefresh(options) {
+    if (options.playing || !options.isLive) {
+        return {
+            paths: options.displayPaths,
+            showLiveEntities: false,
+        };
+    }
+    return {
+        paths: options.fullPaths,
+        showLiveEntities: true,
+    };
 }
 
 const CARD_CSS = `
@@ -625,13 +804,16 @@ class TraceOnMapCard extends HTMLElement {
         this._legendEl = null;
         this._timelinePoints = [];
         this._fullPaths = [];
+        this._displayPaths = [];
+        this._isLiveView = true;
         this._entityColors = new Map();
         this._playback = new PlaybackController();
         this._unsubscribePlayback = null;
         this._historyFetchedAt = 0;
         this._fetchToken = 0;
         this._built = false;
-        this._scrubbingLive = true;
+        this._resizeObserver = null;
+        this._resizeTimer = null;
         this._shadow = this.attachShadow({ mode: 'open' });
     }
     static getConfigElement() {
@@ -668,10 +850,13 @@ class TraceOnMapCard extends HTMLElement {
         };
         this._assignColors();
         if (this._built) {
+            this._playback.pause();
             this._applyAspectRatio();
             this._renderLegend();
+            this._updateTitle();
+            // History fetch will scrub to live end and refresh map — do not force full sync here.
             void this._fetchHistory();
-            this._syncMap(true);
+            this._scheduleMapResize();
         }
         else if (this.isConnected) {
             void this._build();
@@ -684,9 +869,13 @@ class TraceOnMapCard extends HTMLElement {
             return;
         }
         if (this._built) {
-            this._syncMap(this._scrubbingLive);
+            this._refreshMapFromHass();
             const now = Date.now();
-            if (now - this._historyFetchedAt > 60000) {
+            if (shouldAutoRefetchHistory({
+                playing: this._playback.playing,
+                lastFetchedAt: this._historyFetchedAt,
+                now,
+            })) {
                 void this._fetchHistory();
             }
         }
@@ -695,12 +884,30 @@ class TraceOnMapCard extends HTMLElement {
         return this._hass;
     }
     connectedCallback() {
-        if (this._config && this._hass && !this._built) {
+        if (this._built) {
+            this._bindPlayback();
+            this._observeResize();
+            this._scheduleMapResize();
+            this._refreshMapFromHass();
+            return;
+        }
+        if (this._config && this._hass) {
             void this._build();
         }
     }
     disconnectedCallback() {
-        this._playback.destroy();
+        this._playback.detach();
+        this._unbindPlayback();
+        this._teardownResize();
+    }
+    _bindPlayback() {
+        if (this._unsubscribePlayback)
+            return;
+        this._unsubscribePlayback = this._playback.subscribe((index, playing) => {
+            this._onPlayback(index, playing);
+        });
+    }
+    _unbindPlayback() {
         this._unsubscribePlayback?.();
         this._unsubscribePlayback = null;
     }
@@ -710,7 +917,7 @@ class TraceOnMapCard extends HTMLElement {
         this._entityColors.clear();
         const configs = normalizeEntityConfigs(this._config.entities);
         configs.forEach((c, i) => {
-            this._entityColors.set(c.entity, c.color ?? ENTITY_COLORS[i % ENTITY_COLORS.length]);
+            this._entityColors.set(c.entity, sanitizeCssColor(c.color ?? ENTITY_COLORS[i % ENTITY_COLORS.length], ENTITY_COLORS[i % ENTITY_COLORS.length]));
         });
     }
     async _build() {
@@ -746,22 +953,17 @@ class TraceOnMapCard extends HTMLElement {
         this._sliderEl = this._shadow.getElementById('slider');
         this._playBtn = this._shadow.getElementById('play');
         this._timeLabelEl = this._shadow.getElementById('time-label');
-        const titleEl = this._shadow.getElementById('title');
-        if (titleEl) {
-            titleEl.textContent = this._config.title ?? '';
-            titleEl.style.display = this._config.title ? '' : 'none';
-        }
+        this._updateTitle();
         this._playBtn.innerHTML = playIcon();
         this._playBtn.addEventListener('click', () => this._playback.toggle());
         this._sliderEl.addEventListener('input', () => {
             this._playback.scrub(Number(this._sliderEl.value));
         });
-        this._unsubscribePlayback = this._playback.subscribe((index, playing) => {
-            this._onPlayback(index, playing);
-        });
+        this._bindPlayback();
         this._applyAspectRatio();
         this._renderLegend();
         this._updatePlayBtn(false);
+        this._observeResize();
         const haVersion = this._hass?.config?.version;
         if (!isHaVersionSupported(haVersion)) {
             this._showAlert(`Requires Home Assistant Core ${MIN_HA_VERSION} or newer` +
@@ -769,16 +971,52 @@ class TraceOnMapCard extends HTMLElement {
                 '.');
             return;
         }
-        const ok = await whenHaMapDefined();
+        const ok = await ensureHaMapLoaded();
         if (!ok) {
-            this._showAlert(`ha-map is not available. Requires Home Assistant Core ${MIN_HA_VERSION}+ with a working default Map card.`);
+            this._showAlert(`ha-map is not available. Requires Home Assistant Core ${MIN_HA_VERSION}+. Open a native Map card once, or upgrade HA, then reload.`);
             return;
         }
         this._mapEl = createHaMapElement();
         this._mapEl.classList.add('map-el');
         this._mapWrap.appendChild(this._mapEl);
-        this._syncMap(true);
+        this._isLiveView = true;
+        this._displayPaths = this._fullPaths;
+        this._applyMap(this._fullPaths, true);
+        this._scheduleMapResize();
         await this._fetchHistory();
+    }
+    _updateTitle() {
+        const titleEl = this._shadow.getElementById('title');
+        if (!titleEl || !this._config)
+            return;
+        titleEl.textContent = this._config.title ?? '';
+        titleEl.style.display = this._config.title ? '' : 'none';
+    }
+    _observeResize() {
+        if (!this._mapWrap || this._resizeObserver)
+            return;
+        if (typeof ResizeObserver === 'undefined')
+            return;
+        this._resizeObserver = new ResizeObserver(() => {
+            this._scheduleMapResize();
+        });
+        this._resizeObserver.observe(this._mapWrap);
+    }
+    _teardownResize() {
+        this._resizeObserver?.disconnect();
+        this._resizeObserver = null;
+        if (this._resizeTimer !== null) {
+            clearTimeout(this._resizeTimer);
+            this._resizeTimer = null;
+        }
+    }
+    _scheduleMapResize() {
+        if (this._resizeTimer !== null)
+            clearTimeout(this._resizeTimer);
+        this._resizeTimer = setTimeout(() => {
+            this._resizeTimer = null;
+            resizeHaMap(this._mapEl);
+        }, 100);
     }
     _applyAspectRatio() {
         if (!this._mapWrap || !this._config)
@@ -800,6 +1038,12 @@ class TraceOnMapCard extends HTMLElement {
         this._alertEl.style.display = '';
         this._alertEl.textContent = msg;
     }
+    _clearAlert() {
+        if (!this._alertEl)
+            return;
+        this._alertEl.style.display = 'none';
+        this._alertEl.textContent = '';
+    }
     _getEntityConfigs() {
         return normalizeEntityConfigs(this._config?.entities ?? []);
     }
@@ -811,26 +1055,26 @@ class TraceOnMapCard extends HTMLElement {
             this._loadingEl.style.display = '';
         const hoursToShow = clampHours(this._config.hours_to_show);
         const startTime = new Date(Date.now() - hoursToShow * 3600 * 1000);
-        const entityIds = this._getEntityConfigs()
+        const entityIdList = this._getEntityConfigs()
             .map((e) => e.entity)
-            .filter((id) => id && !isZoneEntity(id))
-            .join(',');
-        if (!entityIds) {
+            .filter((id) => id && !isZoneEntity(id));
+        if (entityIdList.length === 0) {
             if (this._loadingEl)
                 this._loadingEl.style.display = 'none';
             this._timelinePoints = [];
             this._fullPaths = [];
+            this._displayPaths = [];
             this._playback.setPoints([]);
-            this._syncMap(true);
+            this._isLiveView = true;
+            this._applyMap([], true);
             return;
         }
         try {
-            const path = `history/period/${startTime.toISOString()}` +
-                `?filter_entity_id=${entityIds}` +
-                `&significant_changes_only=0`;
+            const path = buildHistoryApiPath(startTime, entityIdList);
             const data = await this._hass.callApi('GET', path);
             if (token !== this._fetchToken)
                 return;
+            this._clearAlert();
             const configs = this._getEntityConfigs();
             this._timelinePoints = extractTimelinePoints(data, configs);
             this._fullPaths = buildHaPaths(this._timelinePoints, configs, hoursToShow, this._entityColors);
@@ -846,18 +1090,21 @@ class TraceOnMapCard extends HTMLElement {
                 startLbl.textContent = formatDateTime(startTime);
             if (endLbl)
                 endLbl.textContent = formatDateTime(new Date());
-            // Default view: full path + live markers (scrub at end)
             if (this._timelinePoints.length > 0) {
                 this._playback.scrub(lastIdx);
             }
             else {
-                this._scrubbingLive = true;
-                this._syncMap(true);
+                this._isLiveView = true;
+                this._displayPaths = this._fullPaths;
+                this._applyMap(this._fullPaths, true);
             }
         }
         catch (err) {
             console.warn('trace-on-map-card: failed to fetch history', err);
             this._showAlert('Failed to load history. Live positions still shown.');
+            this._isLiveView = true;
+            this._displayPaths = this._fullPaths;
+            this._applyMap(this._fullPaths, true);
         }
         finally {
             if (this._loadingEl)
@@ -869,16 +1116,29 @@ class TraceOnMapCard extends HTMLElement {
             this._sliderEl.value = String(index);
         this._updateTimeLabel(index);
         this._updatePlayBtn(playing);
-        const atEnd = this._timelinePoints.length === 0 ||
-            index >= this._timelinePoints.length - 1;
-        this._scrubbingLive = atEnd && !playing;
-        const clipped = clipTimelineToIndex(this._timelinePoints, index);
         const hoursToShow = clampHours(this._config?.hours_to_show);
-        const paths = buildHaPaths(clipped, this._getEntityConfigs(), hoursToShow, this._entityColors);
-        this._applyMap(paths, this._scrubbingLive);
+        const clipped = clipTimelineToIndex(this._timelinePoints, index);
+        const clippedPaths = buildHaPaths(clipped, this._getEntityConfigs(), hoursToShow, this._entityColors);
+        const view = resolveMapViewState({
+            playing,
+            timelineIndex: index,
+            timelineLength: this._timelinePoints.length,
+            fullPaths: this._fullPaths,
+            clippedPaths,
+        });
+        this._isLiveView = view.isLive;
+        this._displayPaths = view.paths;
+        this._applyMap(view.paths, view.showLiveEntities);
     }
-    _syncMap(showLiveEntities) {
-        this._applyMap(this._fullPaths, showLiveEntities);
+    /** hass updates must not replace clipped paths while scrubbing/playing. */
+    _refreshMapFromHass() {
+        const refresh = resolveHassMapRefresh({
+            playing: this._playback.playing,
+            isLive: this._isLiveView,
+            displayPaths: this._displayPaths,
+            fullPaths: this._fullPaths,
+        });
+        this._applyMap(refresh.paths, refresh.showLiveEntities);
     }
     _applyMap(paths, showLiveEntities) {
         if (!this._mapEl || !this._config)
@@ -901,7 +1161,8 @@ class TraceOnMapCard extends HTMLElement {
             .filter((c) => showLiveEntities || isZoneEntity(c.entity))
             .map((c) => ({
             entity_id: c.entity,
-            color: this._entityColors.get(c.entity) ?? colorForEntity(c.entity, configs),
+            color: sanitizeCssColor(this._entityColors.get(c.entity) ??
+                colorForEntity(c.entity, configs), ENTITY_COLORS[0]),
             name: c.name ?? friendlyName(this._hass?.states[c.entity]),
             focus: c.focus,
             label_mode: c.label_mode,
@@ -913,7 +1174,8 @@ class TraceOnMapCard extends HTMLElement {
         const configs = this._getEntityConfigs().filter((c) => c.entity && !isZoneEntity(c.entity));
         this._legendEl.innerHTML = configs
             .map((c) => {
-            const color = this._entityColors.get(c.entity) ?? colorForEntity(c.entity, configs);
+            const color = sanitizeCssColor(this._entityColors.get(c.entity) ??
+                colorForEntity(c.entity, configs), ENTITY_COLORS[0]);
             const name = c.name ??
                 friendlyName(this._hass?.states[c.entity]) ??
                 c.entity;
@@ -951,7 +1213,8 @@ function escapeHtml(s) {
     return s
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 if (!customElements.get('trace-on-map-card')) {
     customElements.define('trace-on-map-card', TraceOnMapCard);

@@ -75,6 +75,26 @@ describe('extractTimelinePoints', () => {
       []
     );
   });
+
+  it('accepts string latitude/longitude', () => {
+    const data: HistoryState[][] = [
+      [
+        {
+          entity_id: 'device_tracker.a',
+          state: 'not_home',
+          last_changed: '2026-01-01T10:00:00Z',
+          attributes: { latitude: '31.2' as unknown as number, longitude: '121.5' as unknown as number },
+        },
+      ],
+    ];
+    // Simulate raw JSON strings by casting through unknown attributes
+    (data[0][0].attributes as Record<string, unknown>).latitude = '31.2';
+    (data[0][0].attributes as Record<string, unknown>).longitude = '121.5';
+    const points = extractTimelinePoints(data, [{ entity: 'device_tracker.a' }]);
+    expect(points).toHaveLength(1);
+    expect(points[0].lat).toBe(31.2);
+    expect(points[0].lng).toBe(121.5);
+  });
 });
 
 describe('clipTimelineToIndex', () => {

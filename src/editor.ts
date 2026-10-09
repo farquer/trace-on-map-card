@@ -1,10 +1,5 @@
 import type { EntityConfig, TraceOnMapCardConfig } from './types.js';
-import {
-  DEFAULT_HOURS_TO_SHOW,
-  DEFAULT_ZOOM,
-  MAX_HOURS_TO_SHOW,
-  MIN_HOURS_TO_SHOW,
-} from './types.js';
+import { MAX_HOURS_TO_SHOW, MIN_HOURS_TO_SHOW } from './types.js';
 import { clampHours, clampZoom, normalizeEntityConfigs } from './utils.js';
 
 declare global {

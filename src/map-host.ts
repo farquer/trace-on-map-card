@@ -1,3 +1,4 @@
+import { notifyHaMapResize } from './ha-map-loader.js';
 import type { HaMapEntity, HaMapPaths, HomeAssistant, ThemeMode } from './types.js';
 
 export interface HaMapProps {
@@ -11,26 +12,6 @@ export interface HaMapProps {
   zoom: number;
 }
 
-export function isHaMapAvailable(): boolean {
-  return typeof customElements !== 'undefined' && !!customElements.get('ha-map');
-}
-
-export async function whenHaMapDefined(timeoutMs = 10000): Promise<boolean> {
-  if (isHaMapAvailable()) return true;
-  if (typeof customElements === 'undefined') return false;
-  try {
-    await Promise.race([
-      customElements.whenDefined('ha-map'),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), timeoutMs)
-      ),
-    ]);
-    return true;
-  } catch {
-    return isHaMapAvailable();
-  }
-}
-
 export function createHaMapElement(): HTMLElement {
   const el = document.createElement('ha-map');
   el.style.width = '100%';
@@ -42,7 +23,7 @@ export function createHaMapElement(): HTMLElement {
 export function applyMapProps(el: HTMLElement, props: HaMapProps): void {
   const map = el as HTMLElement & Record<string, unknown>;
 
-  // HA 2026.9+ ha-map primarily uses Lit contexts; set .hass when present for compat.
+  // HA 2026.9+ ha-map uses Lit contexts for states; still set .hass when accepted.
   if (props.hass) {
     try {
       map.hass = props.hass;
@@ -59,7 +40,6 @@ export function applyMapProps(el: HTMLElement, props: HaMapProps): void {
   map.themeMode = props.themeMode;
   map.zoom = props.zoom;
 
-  // Attribute mirrors for boolean/string props used by some HA builds
   if (props.autoFit) el.setAttribute('auto-fit', '');
   else el.removeAttribute('auto-fit');
   if (props.fitZones) el.setAttribute('fit-zones', '');
@@ -67,4 +47,8 @@ export function applyMapProps(el: HTMLElement, props: HaMapProps): void {
   if (props.cluster) el.setAttribute('cluster-markers', '');
   else el.removeAttribute('cluster-markers');
   el.setAttribute('theme-mode', props.themeMode);
+}
+
+export function resizeHaMap(el: HTMLElement | null | undefined): void {
+  notifyHaMapResize(el);
 }

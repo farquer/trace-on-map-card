@@ -47,4 +47,23 @@ describe('PlaybackController', () => {
     expect(c.playing).toBe(true);
     c.destroy();
   });
+
+  it('detach pauses but allows resubscribe (reconnect regression)', () => {
+    vi.useFakeTimers();
+    const c = new PlaybackController();
+    const seen: number[] = [];
+    c.setPoints(points);
+    const unsub = c.subscribe((i) => seen.push(i));
+    c.play();
+    c.detach();
+    expect(c.playing).toBe(false);
+    unsub();
+    const seen2: number[] = [];
+    c.subscribe((i) => seen2.push(i));
+    c.play();
+    vi.runAllTimers();
+    expect(seen2.length).toBeGreaterThan(0);
+    expect(c.index).toBe(2);
+    c.destroy();
+  });
 });

@@ -1,3 +1,4 @@
+import { toCoordNumber } from './coords.js';
 import type {
   EntityConfig,
   HaMapPaths,
@@ -5,6 +6,7 @@ import type {
   TimelinePoint,
 } from './types.js';
 import { colorForEntity } from './utils.js';
+import { sanitizeCssColor } from './color.js';
 
 export function normalizeHistories(
   data: HistoryState[][] | Record<string, HistoryState[]>
@@ -30,10 +32,9 @@ export function extractTimelinePoints(
     if (!entityId) return;
 
     entityHistory.forEach((state) => {
-      const lat = state.attributes?.latitude;
-      const lng = state.attributes?.longitude;
+      const lat = toCoordNumber(state.attributes?.latitude);
+      const lng = toCoordNumber(state.attributes?.longitude);
       if (lat == null || lng == null) return;
-      if (typeof lat !== 'number' || typeof lng !== 'number') return;
       const ts = new Date(state.last_updated ?? state.last_changed).getTime();
       if (!Number.isFinite(ts)) return;
       points.push({ timestamp: ts, entityId, lat, lng });
@@ -60,13 +61,14 @@ export function buildHaPaths(
   for (const [entityId, entityPoints] of byEntity) {
     if (entityPoints.length === 0) continue;
     const cfg = entityConfigs.find((c) => c.entity === entityId);
+    const rawColor = colorForEntity(entityId, entityConfigs, colorMap);
     paths.push({
       points: entityPoints.map((p) => ({
         point: [p.lat, p.lng],
         timestamp: new Date(p.timestamp),
       })),
       name: cfg?.name ?? entityId,
-      color: colorForEntity(entityId, entityConfigs, colorMap),
+      color: sanitizeCssColor(rawColor),
       gradualOpacity: 0.8,
       fullDatetime: hoursToShow > 144,
     });
