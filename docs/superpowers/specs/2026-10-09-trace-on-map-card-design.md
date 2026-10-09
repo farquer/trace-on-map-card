@@ -25,6 +25,7 @@ Home Assistant Lovelace custom card that shows entity location history on HA’s
 | Delivery | HACS custom repo + manual `/local/` module |
 | Code location | All new code in `trace-on-map-card/` |
 | Card type | `custom:trace-on-map-card` |
+| Min HA Core | **≥ 2026.9.0**（运行时校验 `hass.config.version`；HACS `homeassistant` 字段） |
 
 ## 3. Architecture
 

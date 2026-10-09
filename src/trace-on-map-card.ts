@@ -23,6 +23,7 @@ import type {
 import {
   DEFAULT_HOURS_TO_SHOW,
   DEFAULT_ZOOM,
+  MIN_HA_VERSION,
 } from './types.js';
 import {
   ENTITY_COLORS,
@@ -31,6 +32,7 @@ import {
   colorForEntity,
   formatDateTime,
   formatTime,
+  isHaVersionSupported,
   isZoneEntity,
   normalizeEntityConfigs,
   parseAspectRatio,
@@ -321,10 +323,20 @@ class TraceOnMapCard extends HTMLElement {
     this._renderLegend();
     this._updatePlayBtn(false);
 
+    const haVersion = this._hass?.config?.version;
+    if (!isHaVersionSupported(haVersion)) {
+      this._showAlert(
+        `Requires Home Assistant Core ${MIN_HA_VERSION} or newer` +
+          (haVersion ? ` (current: ${haVersion})` : '') +
+          '.'
+      );
+      return;
+    }
+
     const ok = await whenHaMapDefined();
     if (!ok) {
       this._showAlert(
-        'ha-map is not available. Update Home Assistant frontend or ensure the default Map card works.'
+        `ha-map is not available. Requires Home Assistant Core ${MIN_HA_VERSION}+ with a working default Map card.`
       );
       return;
     }
@@ -541,8 +553,10 @@ window.customCards.push({
   type: 'trace-on-map-card',
   name: 'Trace on Map Card',
   description:
-    'Location history on the Home Assistant default map with timeline playback',
+    `Location history on the HA default map with timeline playback (requires Core ${MIN_HA_VERSION}+)`,
   preview: true,
+  documentationURL:
+    'https://github.com/farquer/trace-on-map-card',
 });
 
 export { TraceOnMapCard };

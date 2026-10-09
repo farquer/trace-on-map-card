@@ -1,3 +1,5 @@
+/** Minimum Home Assistant Core version (inclusive). */
+const MIN_HA_VERSION = '2026.9.0';
 const DEFAULT_HOURS_TO_SHOW = 24;
 const MAX_HOURS_TO_SHOW = 720;
 const MIN_HOURS_TO_SHOW = 1;
@@ -84,6 +86,34 @@ function parseAspectRatio(ratio) {
     if (!(w > 0 && h > 0))
         return null;
     return { w, h };
+}
+/** Parse HA version strings like "2026.9.3" or "2026.9.3b0" into [y,m,p]. */
+function parseHaVersion(version) {
+    if (!version)
+        return null;
+    const m = String(version)
+        .trim()
+        .match(/^(\d+)\.(\d+)\.(\d+)/);
+    if (!m)
+        return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+function compareHaVersions(a, b) {
+    const pa = parseHaVersion(a);
+    const pb = parseHaVersion(b);
+    if (!pa || !pb)
+        return 0;
+    for (let i = 0; i < 3; i++) {
+        if (pa[i] !== pb[i])
+            return pa[i] < pb[i] ? -1 : 1;
+    }
+    return 0;
+}
+/** True when version is >= MIN_HA_VERSION (2026.9.0). */
+function isHaVersionSupported(version, minimum = MIN_HA_VERSION) {
+    if (!parseHaVersion(version ?? undefined))
+        return false;
+    return compareHaVersions(String(version), minimum) >= 0;
 }
 
 class TraceOnMapCardEditor extends HTMLElement {
@@ -349,8 +379,8 @@ function createHaMapElement() {
 }
 function applyMapProps(el, props) {
     const map = el;
-    // Older HA versions accept .hass; newer ha-map uses Lit contexts from the app tree.
-    if ('hass' in map || props.hass) {
+    // HA 2026.9+ ha-map primarily uses Lit contexts; set .hass when present for compat.
+    if (props.hass) {
         try {
             map.hass = props.hass;
         }
@@ -732,9 +762,16 @@ class TraceOnMapCard extends HTMLElement {
         this._applyAspectRatio();
         this._renderLegend();
         this._updatePlayBtn(false);
+        const haVersion = this._hass?.config?.version;
+        if (!isHaVersionSupported(haVersion)) {
+            this._showAlert(`Requires Home Assistant Core ${MIN_HA_VERSION} or newer` +
+                (haVersion ? ` (current: ${haVersion})` : '') +
+                '.');
+            return;
+        }
         const ok = await whenHaMapDefined();
         if (!ok) {
-            this._showAlert('ha-map is not available. Update Home Assistant frontend or ensure the default Map card works.');
+            this._showAlert(`ha-map is not available. Requires Home Assistant Core ${MIN_HA_VERSION}+ with a working default Map card.`);
             return;
         }
         this._mapEl = createHaMapElement();
@@ -923,8 +960,9 @@ window.customCards = window.customCards || [];
 window.customCards.push({
     type: 'trace-on-map-card',
     name: 'Trace on Map Card',
-    description: 'Location history on the Home Assistant default map with timeline playback',
+    description: `Location history on the HA default map with timeline playback (requires Core ${MIN_HA_VERSION}+)`,
     preview: true,
+    documentationURL: 'https://github.com/farquer/trace-on-map-card',
 });
 
 export { TraceOnMapCard };

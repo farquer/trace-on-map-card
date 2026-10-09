@@ -7,6 +7,7 @@ import {
   DEFAULT_HOURS_TO_SHOW,
   DEFAULT_ZOOM,
   MAX_HOURS_TO_SHOW,
+  MIN_HA_VERSION,
   MIN_HOURS_TO_SHOW,
 } from './types.js';
 
@@ -105,4 +106,35 @@ export function parseAspectRatio(
   const h = Number(m[2]);
   if (!(w > 0 && h > 0)) return null;
   return { w, h };
+}
+
+/** Parse HA version strings like "2026.9.3" or "2026.9.3b0" into [y,m,p]. */
+export function parseHaVersion(
+  version: string | undefined | null
+): [number, number, number] | null {
+  if (!version) return null;
+  const m = String(version)
+    .trim()
+    .match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+export function compareHaVersions(a: string, b: string): number {
+  const pa = parseHaVersion(a);
+  const pb = parseHaVersion(b);
+  if (!pa || !pb) return 0;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/** True when version is >= MIN_HA_VERSION (2026.9.0). */
+export function isHaVersionSupported(
+  version: string | undefined | null,
+  minimum: string = MIN_HA_VERSION
+): boolean {
+  if (!parseHaVersion(version ?? undefined)) return false;
+  return compareHaVersions(String(version), minimum) >= 0;
 }

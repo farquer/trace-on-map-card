@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { clampHours, clampZoom, normalizeEntityConfigs, parseAspectRatio } from '../utils';
+import {
+  clampHours,
+  clampZoom,
+  compareHaVersions,
+  isHaVersionSupported,
+  normalizeEntityConfigs,
+  parseAspectRatio,
+  parseHaVersion,
+} from '../utils';
 
 describe('clampHours', () => {
   it('defaults to 24 when missing', () => {
@@ -56,5 +64,27 @@ describe('parseAspectRatio', () => {
 
   it('returns null for invalid', () => {
     expect(parseAspectRatio('foo')).toBeNull();
+  });
+});
+
+describe('HA version gate (>= 2026.9.0)', () => {
+  it('parses core versions', () => {
+    expect(parseHaVersion('2026.9.0')).toEqual([2026, 9, 0]);
+    expect(parseHaVersion('2026.9.3b0')).toEqual([2026, 9, 3]);
+  });
+
+  it('compares versions', () => {
+    expect(compareHaVersions('2026.9.0', '2026.9.0')).toBe(0);
+    expect(compareHaVersions('2026.8.9', '2026.9.0')).toBe(-1);
+    expect(compareHaVersions('2026.10.0', '2026.9.0')).toBe(1);
+  });
+
+  it('accepts 2026.9.x and above only', () => {
+    expect(isHaVersionSupported('2026.9.0')).toBe(true);
+    expect(isHaVersionSupported('2026.9.4')).toBe(true);
+    expect(isHaVersionSupported('2026.10.0')).toBe(true);
+    expect(isHaVersionSupported('2026.8.4')).toBe(false);
+    expect(isHaVersionSupported('2025.12.0')).toBe(false);
+    expect(isHaVersionSupported(undefined)).toBe(false);
   });
 });

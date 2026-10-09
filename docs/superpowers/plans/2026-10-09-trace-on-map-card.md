@@ -16,6 +16,7 @@
 - Delivery: HACS (`hacs.json`) + manual `/local/` README
 - Config parity: historymapcard features + `auto_fit`, `fit_zones`, `aspect_ratio`, `theme_mode`, `cluster`, zones via entities
 - All code under `/Users/farquer/github/trace-on-map-card`
+- Minimum Home Assistant Core: **2026.9.0** (reject older at runtime)
 
 ---
 

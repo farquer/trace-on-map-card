@@ -42,8 +42,8 @@ export function createHaMapElement(): HTMLElement {
 export function applyMapProps(el: HTMLElement, props: HaMapProps): void {
   const map = el as HTMLElement & Record<string, unknown>;
 
-  // Older HA versions accept .hass; newer ha-map uses Lit contexts from the app tree.
-  if ('hass' in map || props.hass) {
+  // HA 2026.9+ ha-map primarily uses Lit contexts; set .hass when present for compat.
+  if (props.hass) {
     try {
       map.hass = props.hass;
     } catch {

@@ -15,12 +15,19 @@ export interface HassEntity {
 
 export interface HomeAssistant {
   states: Record<string, HassEntity>;
+  config?: {
+    version?: string;
+    [key: string]: unknown;
+  };
   callApi: <T>(
     method: 'GET' | 'POST',
     path: string,
     parameters?: Record<string, unknown>
   ) => Promise<T>;
 }
+
+/** Minimum Home Assistant Core version (inclusive). */
+export const MIN_HA_VERSION = '2026.9.0';
 
 export interface EntityConfig {
   entity: string;

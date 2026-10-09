@@ -1,5 +1,6 @@
 {
   "name": "Trace on Map Card",
   "render_readme": true,
-  "filename": "trace-on-map-card.js"
+  "filename": "trace-on-map-card.js",
+  "homeassistant": "2026.9.0"
 }
