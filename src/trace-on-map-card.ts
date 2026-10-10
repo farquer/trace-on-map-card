@@ -540,6 +540,7 @@ class TraceOnMapCard extends HTMLElement {
   ): void {
     if (!this._mapEl || !this._config) return;
     const configs = normalizeEntityConfigs(this._config.entities);
+    const cluster = this._config.cluster !== false;
     const editableLocations = isLive
       ? []
       : buildScrubEditableLocations({
@@ -561,6 +562,8 @@ class TraceOnMapCard extends HTMLElement {
           states: this._hass?.states,
           hassUrl: this._hass?.hassUrl?.bind(this._hass),
           elementCache: this._scrubMarkerEls,
+          // Match live ha-map marker chrome (cluster bubble vs floating pin).
+          cluster,
         });
 
     applyMapProps(this._mapEl, {
@@ -575,7 +578,7 @@ class TraceOnMapCard extends HTMLElement {
       editableLocations,
       autoFit: this._config.auto_fit !== false,
       fitZones: !!this._config.fit_zones,
-      cluster: this._config.cluster !== false,
+      cluster,
       themeMode: resolveThemeMode(this._config),
       zoom: clampZoom(this._config.default_zoom),
     });

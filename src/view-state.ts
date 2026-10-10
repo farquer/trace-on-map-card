@@ -47,7 +47,8 @@ export function resolveMapViewState(input: MapViewStateInput): MapViewState {
 
   return {
     paths: clippedPaths,
-    // Hide live markers (they'd stay at "now"); scrub avatars use editableLocations.
+    // Hide live markers (they'd stay at "now"); scrub pins use editableLocations
+    // styled like HA cluster/floating markers, tip-anchored above path dots.
     showLiveEntities: false,
     isLive: false,
   };
