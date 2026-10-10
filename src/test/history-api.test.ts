@@ -57,4 +57,15 @@ describe('shouldAutoRefetchHistory', () => {
       })
     ).toBe(false);
   });
+
+  it('skips while a fetch is in flight', () => {
+    expect(
+      shouldAutoRefetchHistory({
+        playing: false,
+        lastFetchedAt: 0,
+        now: 100_000,
+        inFlight: true,
+      })
+    ).toBe(false);
+  });
 });

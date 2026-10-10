@@ -44,6 +44,11 @@ export interface TraceOnMapCardConfig {
   type: string;
   entities: Array<EntityConfig | string>;
   hours_to_show?: number;
+  /**
+   * Soft budget for points per history window. Omit = unlimited (no
+   * windowing / downsample). When set, History is lazy-loaded in 24h windows.
+   */
+  max_timeline_points?: number;
   default_zoom?: number;
   auto_fit?: boolean;
   fit_zones?: boolean;

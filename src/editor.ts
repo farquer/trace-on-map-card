@@ -266,6 +266,31 @@ class TraceOnMapCardEditor extends HTMLElement {
       )
     );
     root.appendChild(
+      this._optionalNumberRow(
+        'Max timeline points (blank = unlimited)',
+        config.max_timeline_points,
+        1,
+        100_000,
+        (v) => {
+          if (v == null) {
+            const next = { ...this._config! };
+            delete next.max_timeline_points;
+            this._config = next;
+            this.dispatchEvent(
+              new CustomEvent('config-changed', {
+                detail: { config: this._config },
+                bubbles: true,
+                composed: true,
+              })
+            );
+            this._render();
+            return;
+          }
+          this._update({ max_timeline_points: v });
+        }
+      )
+    );
+    root.appendChild(
       this._numberRow(
         'Default zoom',
         clampZoom(config.default_zoom),
@@ -387,6 +412,42 @@ class TraceOnMapCardEditor extends HTMLElement {
     input.max = String(max);
     input.value = String(value);
     input.addEventListener('change', () => onChange(input.value));
+    row.appendChild(lab);
+    row.appendChild(input);
+    return row;
+  }
+
+  private _optionalNumberRow(
+    label: string,
+    value: number | undefined,
+    min: number,
+    max: number,
+    onChange: (v: number | null) => void
+  ): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'form-row';
+    const lab = document.createElement('label');
+    lab.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = String(min);
+    input.max = String(max);
+    input.className = 'max-timeline-points';
+    input.placeholder = 'Unlimited';
+    input.value = value != null ? String(value) : '';
+    input.addEventListener('change', () => {
+      const raw = input.value.trim();
+      if (!raw) {
+        onChange(null);
+        return;
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < min) {
+        onChange(null);
+        return;
+      }
+      onChange(Math.min(max, Math.floor(n)));
+    });
     row.appendChild(lab);
     row.appendChild(input);
     return row;

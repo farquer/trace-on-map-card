@@ -24,6 +24,19 @@ import {
   buildScrubEditableLocations,
   positionsAtTimelineIndex,
 } from './scrub-markers.js';
+import {
+  HISTORY_WINDOW_MS,
+  TIME_SLIDER_MAX,
+  buildHistoryWindows,
+  downsampleTimeline,
+  filterPointsInWindow,
+  findWindowIndexForTime,
+  indexAtOrBeforeTime,
+  mergeTimelinePoints,
+  sliderValueToTimestamp,
+  timestampToSliderValue,
+  type HistoryWindow,
+} from './timeline-perf.js';
 import type {
   HaMapPaths,
   HistoryState,
@@ -155,6 +168,11 @@ const CARD_CSS = `
     font-size: 0.85em;
     color: var(--secondary-text-color, #727272);
   }
+  .play-pause-btn:disabled,
+  .timeline-slider:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
 `;
 
 class TraceOnMapCard extends HTMLElement {
@@ -181,10 +199,21 @@ class TraceOnMapCard extends HTMLElement {
   private _unsubscribePlayback: (() => void) | null = null;
   private _historyFetchedAt = 0;
   private _fetchToken = 0;
+  private _historyInFlight = false;
   private _built = false;
   private _buildGeneration = 0;
   private _resizeObserver: ResizeObserver | null = null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Budget mode: full range + time-mapped slider. */
+  private _timeSliderMode = false;
+  private _timelineStartMs = 0;
+  private _timelineEndMs = 0;
+  private _historyWindows: HistoryWindow[] = [];
+  private _loadedWindowIds = new Set<string>();
+  private _loadingWindowIds = new Set<string>();
+  private _playheadTimeMs = 0;
+  private _scrubRaf: number | null = null;
+  private _statusHint = '';
 
   constructor() {
     super();
@@ -233,6 +262,7 @@ class TraceOnMapCard extends HTMLElement {
           playing: this._playback.playing,
           lastFetchedAt: this._historyFetchedAt,
           now: Date.now(),
+          inFlight: this._historyInFlight,
         })
       ) {
         void this._fetchHistory();
@@ -286,7 +316,7 @@ class TraceOnMapCard extends HTMLElement {
       <ha-card>
         <div class="card-header" id="title"></div>
         <div id="map-wrap"><div class="alert" id="alert" style="display:none"></div></div>
-        <div class="loading-msg" id="loading" style="display:none">Loading history…</div>
+        <div class="loading-msg" id="loading" style="display:none"></div>
         <div class="timeline-container">
           <div class="timeline-controls">
             <button type="button" class="play-pause-btn" id="play" title="Play history animation"></button>
@@ -317,14 +347,14 @@ class TraceOnMapCard extends HTMLElement {
     this._updateTitle();
     this._playBtn.innerHTML = playIcon();
     this._playBtn.addEventListener('click', () => this._playback.toggle());
-    this._sliderEl.addEventListener('input', () => {
-      this._playback.scrub(Number(this._sliderEl!.value));
-    });
+    this._sliderEl.addEventListener('input', () => this._onSliderInput());
+    this._sliderEl.addEventListener('change', () => this._flushSliderScrub());
 
     this._bindPlayback();
     this._applyAspectRatio();
     this._renderLegend();
     this._updatePlayBtn(false);
+    this._setTimelineControlsEnabled(false);
     this._observeResize();
 
     await this._ensureMap();
@@ -430,59 +460,135 @@ class TraceOnMapCard extends HTMLElement {
     this._alertEl.textContent = '';
   }
 
+  private _budgetMaxPoints(): number | undefined {
+    return this._config?.max_timeline_points;
+  }
+
+  private _setLoadingVisible(visible: boolean, text = 'Loading history…'): void {
+    if (!this._loadingEl) return;
+    if (visible) {
+      this._statusHint = '';
+      this._loadingEl.textContent = text;
+      this._loadingEl.style.display = '';
+      return;
+    }
+    if (this._statusHint) {
+      this._loadingEl.textContent = this._statusHint;
+      this._loadingEl.style.display = '';
+      return;
+    }
+    this._loadingEl.style.display = 'none';
+    this._loadingEl.textContent = '';
+  }
+
+  private _setTimelineControlsEnabled(enabled: boolean): void {
+    if (this._sliderEl) this._sliderEl.disabled = !enabled;
+    if (this._playBtn) this._playBtn.disabled = !enabled;
+  }
+
+  private _applyEmptyTimelineState(message: string): void {
+    this._statusHint = message;
+    this._setTimelineControlsEnabled(false);
+    this._setLoadingVisible(false);
+  }
+
+  private _onSliderInput(): void {
+    if (this._scrubRaf != null) return;
+    this._scrubRaf = requestAnimationFrame(() => {
+      this._scrubRaf = null;
+      this._flushSliderScrub();
+    });
+  }
+
+  private _flushSliderScrub(): void {
+    if (this._scrubRaf != null) {
+      cancelAnimationFrame(this._scrubRaf);
+      this._scrubRaf = null;
+    }
+    if (!this._sliderEl) return;
+    const value = Number(this._sliderEl.value);
+    if (this._timeSliderMode) {
+      const t = sliderValueToTimestamp(
+        value,
+        0,
+        TIME_SLIDER_MAX,
+        this._timelineStartMs,
+        this._timelineEndMs
+      );
+      this._scrubToTime(t);
+      return;
+    }
+    this._playback.scrub(value);
+  }
+
+  private _scrubToTime(t: number): void {
+    this._playheadTimeMs = t;
+    void this._ensureWindowsAroundTime(t);
+    const idx = indexAtOrBeforeTime(this._timelinePoints, t);
+    if (idx < 0) {
+      this._playbackIndex = 0;
+      if (this._sliderEl && this._timeSliderMode) {
+        this._sliderEl.value = String(
+          timestampToSliderValue(
+            t,
+            0,
+            TIME_SLIDER_MAX,
+            this._timelineStartMs,
+            this._timelineEndMs
+          )
+        );
+      }
+      this._updateTimeLabelFromMs(t);
+      this._isLiveView = false;
+      this._displayPaths = [];
+      this._applyMap([], false, false);
+      return;
+    }
+    this._playback.scrub(idx);
+  }
+
   private async _fetchHistory(): Promise<void> {
     if (!this._hass || !this._config) return;
     const token = ++this._fetchToken;
-    if (this._loadingEl) this._loadingEl.style.display = '';
+    this._historyInFlight = true;
+    this._setLoadingVisible(true);
 
     const hoursToShow = clampHours(this._config.hours_to_show);
-    const startTime = new Date(Date.now() - hoursToShow * 3600 * 1000);
+    const endMs = Date.now();
+    const startMs = endMs - hoursToShow * 3600 * 1000;
     const configs = normalizeEntityConfigs(this._config.entities);
     const entityIdList = historyEntityIds(configs);
+    const budget = this._budgetMaxPoints();
 
     if (entityIdList.length === 0) {
-      if (this._loadingEl) this._loadingEl.style.display = 'none';
-      this._timelinePoints = [];
-      this._fullPaths = [];
-      this._displayPaths = [];
-      this._playback.setPoints([]);
+      this._resetTimelineState();
       this._isLiveView = true;
       this._applyMap([], true);
+      this._applyEmptyTimelineState('No trackable entities (zones only).');
+      if (token === this._fetchToken) this._historyInFlight = false;
       return;
     }
 
     try {
-      const path = buildHistoryApiPath(startTime, entityIdList);
-      const data: HistoryState[][] | Record<string, HistoryState[]> =
-        await this._hass.callApi('GET', path);
-      if (token !== this._fetchToken) return;
-
-      this._clearAlert();
-      this._timelinePoints = extractTimelinePoints(data, configs);
-      this._fullPaths = buildHaPaths(
-        this._timelinePoints,
-        configs,
-        hoursToShow,
-        this._entityColors
-      );
-      this._historyFetchedAt = Date.now();
-      this._playback.setPoints(this._timelinePoints);
-
-      const lastIdx = Math.max(0, this._timelinePoints.length - 1);
-      if (this._sliderEl) {
-        this._sliderEl.max = String(lastIdx);
-      }
-      const startLbl = this._shadow.getElementById('lbl-start');
-      const endLbl = this._shadow.getElementById('lbl-end');
-      if (startLbl) startLbl.textContent = formatDateTime(startTime);
-      if (endLbl) endLbl.textContent = formatDateTime(new Date());
-
-      if (this._timelinePoints.length > 0) {
-        this._playback.scrub(lastIdx);
+      if (budget == null) {
+        await this._fetchHistoryUnlimited(
+          token,
+          startMs,
+          endMs,
+          hoursToShow,
+          configs,
+          entityIdList
+        );
       } else {
-        this._isLiveView = true;
-        this._displayPaths = this._fullPaths;
-        this._applyMap(this._fullPaths, true);
+        await this._fetchHistoryBudget(
+          token,
+          startMs,
+          endMs,
+          hoursToShow,
+          configs,
+          entityIdList,
+          budget
+        );
       }
     } catch (err) {
       console.warn('trace-on-map-card: failed to fetch history', err);
@@ -490,16 +596,258 @@ class TraceOnMapCard extends HTMLElement {
       this._isLiveView = true;
       this._displayPaths = this._fullPaths;
       this._applyMap(this._fullPaths, true);
+      if (this._timelinePoints.length === 0) {
+        this._applyEmptyTimelineState('No location history in this period.');
+      }
     } finally {
-      if (this._loadingEl) this._loadingEl.style.display = 'none';
+      if (token === this._fetchToken) {
+        this._historyInFlight = false;
+        this._setLoadingVisible(false);
+      }
+    }
+  }
+
+  private _resetTimelineState(): void {
+    this._timelinePoints = [];
+    this._fullPaths = [];
+    this._displayPaths = [];
+    this._playback.setPoints([]);
+    this._loadedWindowIds.clear();
+    this._loadingWindowIds.clear();
+    this._historyWindows = [];
+    this._timeSliderMode = false;
+  }
+
+  private async _fetchHistoryUnlimited(
+    token: number,
+    startMs: number,
+    endMs: number,
+    hoursToShow: number,
+    configs: ReturnType<typeof normalizeEntityConfigs>,
+    entityIdList: string[]
+  ): Promise<void> {
+    const path = buildHistoryApiPath(new Date(startMs), entityIdList);
+    const data: HistoryState[][] | Record<string, HistoryState[]> =
+      await this._hass!.callApi('GET', path);
+    if (token !== this._fetchToken) return;
+
+    this._clearAlert();
+    this._timeSliderMode = false;
+    this._historyWindows = [];
+    this._loadedWindowIds.clear();
+    this._timelineStartMs = startMs;
+    this._timelineEndMs = endMs;
+    this._timelinePoints = extractTimelinePoints(data, configs);
+    this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, false);
+  }
+
+  private async _fetchHistoryBudget(
+    token: number,
+    startMs: number,
+    endMs: number,
+    hoursToShow: number,
+    configs: ReturnType<typeof normalizeEntityConfigs>,
+    entityIdList: string[],
+    budget: number
+  ): Promise<void> {
+    this._clearAlert();
+    this._timeSliderMode = true;
+    this._timelineStartMs = startMs;
+    this._timelineEndMs = endMs;
+    this._historyWindows = buildHistoryWindows(
+      startMs,
+      endMs,
+      HISTORY_WINDOW_MS
+    );
+    this._loadedWindowIds.clear();
+    this._loadingWindowIds.clear();
+    this._timelinePoints = [];
+
+    const last = this._historyWindows[this._historyWindows.length - 1];
+    if (!last) {
+      this._applyEmptyTimelineState('No location history in this period.');
+      return;
+    }
+
+    await this._loadHistoryWindow(
+      token,
+      last,
+      true,
+      hoursToShow,
+      configs,
+      entityIdList,
+      budget
+    );
+    if (token !== this._fetchToken) return;
+
+    this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, true);
+  }
+
+  private async _loadHistoryWindow(
+    token: number,
+    window: HistoryWindow,
+    isLast: boolean,
+    hoursToShow: number,
+    configs: ReturnType<typeof normalizeEntityConfigs>,
+    entityIdList: string[],
+    budget: number
+  ): Promise<void> {
+    if (this._loadedWindowIds.has(window.id)) return;
+    if (this._loadingWindowIds.has(window.id)) return;
+    this._loadingWindowIds.add(window.id);
+    try {
+      const path = buildHistoryApiPath(new Date(window.startMs), entityIdList);
+      const data: HistoryState[][] | Record<string, HistoryState[]> =
+        await this._hass!.callApi('GET', path);
+      if (token !== this._fetchToken) return;
+
+      let points = extractTimelinePoints(data, configs);
+      points = filterPointsInWindow(
+        points,
+        window.startMs,
+        window.endMs,
+        isLast
+      );
+      if (points.length > budget) {
+        points = downsampleTimeline(points, budget);
+      }
+      this._timelinePoints = mergeTimelinePoints(this._timelinePoints, points);
+      this._loadedWindowIds.add(window.id);
+    } finally {
+      this._loadingWindowIds.delete(window.id);
+    }
+  }
+
+  private _applyLoadedPoints(
+    hoursToShow: number,
+    configs: ReturnType<typeof normalizeEntityConfigs>,
+    startMs: number,
+    endMs: number,
+    timeSlider: boolean
+  ): void {
+    this._fullPaths = buildHaPaths(
+      this._timelinePoints,
+      configs,
+      hoursToShow,
+      this._entityColors
+    );
+    this._historyFetchedAt = Date.now();
+    this._playback.setPoints(this._timelinePoints);
+
+    const startLbl = this._shadow.getElementById('lbl-start');
+    const endLbl = this._shadow.getElementById('lbl-end');
+    if (startLbl) startLbl.textContent = formatDateTime(new Date(startMs));
+    if (endLbl) endLbl.textContent = formatDateTime(new Date(endMs));
+
+    if (this._sliderEl) {
+      if (timeSlider) {
+        this._sliderEl.min = '0';
+        this._sliderEl.max = String(TIME_SLIDER_MAX);
+        this._sliderEl.value = String(TIME_SLIDER_MAX);
+      } else {
+        const lastIdx = Math.max(0, this._timelinePoints.length - 1);
+        this._sliderEl.min = '0';
+        this._sliderEl.max = String(lastIdx);
+        this._sliderEl.value = String(lastIdx);
+      }
+    }
+
+    if (this._timelinePoints.length === 0) {
+      this._isLiveView = true;
+      this._displayPaths = this._fullPaths;
+      this._applyMap(this._fullPaths, true);
+      this._applyEmptyTimelineState('No location history in this period.');
+      return;
+    }
+
+    this._statusHint = '';
+    this._setTimelineControlsEnabled(true);
+    this._playheadTimeMs = endMs;
+    const lastIdx = this._timelinePoints.length - 1;
+    this._playback.scrub(lastIdx);
+  }
+
+  private async _ensureWindowsAroundTime(t: number): Promise<void> {
+    const budget = this._budgetMaxPoints();
+    if (
+      budget == null ||
+      !this._timeSliderMode ||
+      !this._hass ||
+      !this._config ||
+      this._historyWindows.length === 0
+    ) {
+      return;
+    }
+    const idx = findWindowIndexForTime(this._historyWindows, t);
+    if (idx < 0) return;
+    const targets = [idx - 1, idx, idx + 1].filter(
+      (i) => i >= 0 && i < this._historyWindows.length
+    );
+    const token = this._fetchToken;
+    const hoursToShow = clampHours(this._config.hours_to_show);
+    const configs = normalizeEntityConfigs(this._config.entities);
+    const entityIdList = historyEntityIds(configs);
+    const playhead = this._playheadTimeMs;
+
+    let loadedAny = false;
+    for (const i of targets) {
+      const w = this._historyWindows[i]!;
+      if (this._loadedWindowIds.has(w.id) || this._loadingWindowIds.has(w.id)) {
+        continue;
+      }
+      this._setLoadingVisible(true, 'Loading segment…');
+      await this._loadHistoryWindow(
+        token,
+        w,
+        i === this._historyWindows.length - 1,
+        hoursToShow,
+        configs,
+        entityIdList,
+        budget
+      );
+      loadedAny = true;
+    }
+    if (token !== this._fetchToken) return;
+    if (loadedAny) {
+      this._fullPaths = buildHaPaths(
+        this._timelinePoints,
+        configs,
+        hoursToShow,
+        this._entityColors
+      );
+      this._playback.setPoints(this._timelinePoints);
+      const idxAfter = indexAtOrBeforeTime(this._timelinePoints, playhead);
+      if (idxAfter >= 0) this._playback.scrub(idxAfter);
+      this._setLoadingVisible(false);
     }
   }
 
   private _onPlayback(index: number, playing: boolean): void {
-    if (this._sliderEl) this._sliderEl.value = String(index);
+    this._playbackIndex = index;
+    const pt = this._timelinePoints[index];
+    if (pt) this._playheadTimeMs = pt.timestamp;
+
+    if (this._sliderEl) {
+      if (this._timeSliderMode) {
+        this._sliderEl.value = String(
+          timestampToSliderValue(
+            this._playheadTimeMs || this._timelineEndMs,
+            0,
+            TIME_SLIDER_MAX,
+            this._timelineStartMs,
+            this._timelineEndMs
+          )
+        );
+      } else {
+        this._sliderEl.value = String(index);
+      }
+    }
     this._updateTimeLabel(index);
     this._updatePlayBtn(playing);
-    this._playbackIndex = index;
+
+    if (this._timeSliderMode && playing) {
+      void this._ensureWindowsAroundTime(this._playheadTimeMs);
+    }
 
     const hoursToShow = clampHours(this._config?.hours_to_show);
     const clipped = clipTimelineToIndex(this._timelinePoints, index);
@@ -521,6 +869,11 @@ class TraceOnMapCard extends HTMLElement {
     this._isLiveView = view.isLive;
     this._displayPaths = view.paths;
     this._applyMap(view.paths, view.showLiveEntities, view.isLive);
+  }
+
+  private _updateTimeLabelFromMs(t: number): void {
+    if (!this._timeLabelEl) return;
+    this._timeLabelEl.textContent = formatTime(new Date(t));
   }
 
   private _refreshMapFromHass(): void {

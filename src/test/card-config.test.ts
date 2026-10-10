@@ -26,6 +26,24 @@ describe('normalizeCardConfig', () => {
     expect(cfg.cluster).toBe(true);
     expect(cfg.theme_mode).toBe('auto');
     expect(cfg.default_zoom).toBe(14);
+    expect(cfg.max_timeline_points).toBeUndefined();
+  });
+
+  it('keeps max_timeline_points when set; omits when invalid', () => {
+    expect(
+      normalizeCardConfig({
+        type: 'custom:trace-on-map-card',
+        entities: ['person.a'],
+        max_timeline_points: 3000,
+      }).max_timeline_points
+    ).toBe(3000);
+    expect(
+      normalizeCardConfig({
+        type: 'custom:trace-on-map-card',
+        entities: ['person.a'],
+        max_timeline_points: 0,
+      }).max_timeline_points
+    ).toBeUndefined();
   });
 
   it('maps dark_mode to theme_mode', () => {

@@ -52,6 +52,7 @@ entities:
   - person.alice
   - zone.home
 hours_to_show: 24
+# max_timeline_points: 3000  # 可选；不写=不限制。大跨度（如 720h）建议设置
 default_zoom: 14
 auto_fit: true
 fit_zones: false
@@ -66,6 +67,7 @@ aspect_ratio: "16:9"
 |-----|------|------|
 | `entities` | 必填 | 实体 ID 或 `{entity,name,color}`；可含 `zone.*` |
 | `hours_to_show` | `24` | 历史小时数，范围 1–720 |
+| `max_timeline_points` | 不限制 | 可选。设置后按 24h 时间窗懒加载 History，单窗超过该点数会均匀降采样；**不写则一次拉全量（与旧行为一致）** |
 | `default_zoom` | `14` | 默认缩放 |
 | `auto_fit` | `true` | 自动缩放到实体 |
 | `fit_zones` | `false` | 缩放时包含 zones |
@@ -74,7 +76,7 @@ aspect_ratio: "16:9"
 | `aspect_ratio` | — | 如 `16:9`；不设则固定高度 |
 | `title` | — | 标题 |
 
-实际可展示的历史长度还受 Home Assistant **Recorder** 保留策略限制。
+实际可展示的历史长度还受 Home Assistant **Recorder** 保留策略限制。`hours_to_show: 720` 时建议配置 `max_timeline_points`（例如 `3000`），避免一次拉全量导致卡顿。
 
 ## 开发
 

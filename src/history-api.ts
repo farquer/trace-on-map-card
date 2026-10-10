@@ -17,8 +17,11 @@ export function shouldAutoRefetchHistory(options: {
   lastFetchedAt: number;
   now: number;
   intervalMs?: number;
+  /** Skip while a History request is already in flight (avoids cancel storms). */
+  inFlight?: boolean;
 }): boolean {
   if (options.playing) return false;
+  if (options.inFlight) return false;
   const interval = options.intervalMs ?? 60_000;
   if (options.lastFetchedAt <= 0) return true;
   return options.now - options.lastFetchedAt >= interval;

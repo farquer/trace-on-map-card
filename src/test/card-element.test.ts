@@ -127,6 +127,7 @@ describe('TraceOnMapCard element', () => {
     // Scrub to middle
     slider.value = '0';
     slider.dispatchEvent(new Event('input'));
+    slider.dispatchEvent(new Event('change'));
 
     const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
       paths: Array<{ points: unknown[] }>;
@@ -164,6 +165,7 @@ describe('TraceOnMapCard element', () => {
     // Mid scrub: move to second point — path dots stay (clipped path grows)
     slider.value = '1';
     slider.dispatchEvent(new Event('input'));
+    slider.dispatchEvent(new Event('change'));
     expect(map.editableLocations[0].location).toEqual([1.1, 2.1]);
     expect(map.paths[0].points.length).toBe(2);
     // Tip at wrapper mid-height (120/2=60) so avatar sits above path origin
@@ -187,6 +189,7 @@ describe('TraceOnMapCard element', () => {
     // Live end clears scrub avatars and restores live entities
     slider.value = String(slider.max);
     slider.dispatchEvent(new Event('input'));
+    slider.dispatchEvent(new Event('change'));
     expect(map.editableLocations).toEqual([]);
     expect(
       map.entities.some((e) => e.entity_id === 'device_tracker.phone')
@@ -254,6 +257,7 @@ describe('TraceOnMapCard element', () => {
     const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
     slider.value = '0';
     slider.dispatchEvent(new Event('input'));
+    slider.dispatchEvent(new Event('change'));
 
     const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
       paths: Array<{ points: unknown[] }>;
@@ -275,6 +279,122 @@ describe('TraceOnMapCard element', () => {
     expect(map.editableLocations[0].elementSize[1]).toBe(130);
     // Path origin dots remain while pin floats above
     expect(map.paths[0].points.length).toBe(1);
+  });
+
+  it('disables controls when history has no coordinates', async () => {
+    mockHaMap();
+    const callApi = vi.fn(async () => [
+      [
+        {
+          entity_id: 'person.a',
+          state: 'home',
+          last_changed: '2026-01-01T10:00:00Z',
+          attributes: {},
+        },
+      ],
+    ]);
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+    });
+    await waitFor(() => {
+      expect(callApi).toHaveBeenCalled();
+      const loading = card.shadowRoot!.getElementById('loading');
+      expect(loading?.textContent).toMatch(/No location history/i);
+    });
+    const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
+    const play = card.shadowRoot!.getElementById('play') as HTMLButtonElement;
+    expect(slider.disabled).toBe(true);
+    expect(play.disabled).toBe(true);
+  });
+
+  it('budget mode loads last window first then fetches earlier on scrub', async () => {
+    mockHaMap();
+    const now = Date.now();
+    const day = 24 * 3600 * 1000;
+    const callApi = vi.fn(async (_method: string, path: string) => {
+      const startIso = path.split('history/period/')[1]?.split('?')[0] ?? '';
+      const start = new Date(decodeURIComponent(startIso)).getTime();
+      // Recent window
+      if (start >= now - day - 60_000) {
+        return [
+          [
+            {
+              entity_id: 'person.a',
+              state: 'not_home',
+              last_changed: new Date(now - 3600_000).toISOString(),
+              last_updated: new Date(now - 3600_000).toISOString(),
+              attributes: { latitude: 9, longitude: 9 },
+            },
+          ],
+        ];
+      }
+      return [
+        [
+          {
+            entity_id: 'person.a',
+            state: 'not_home',
+            last_changed: new Date(start + 3600_000).toISOString(),
+            last_updated: new Date(start + 3600_000).toISOString(),
+            attributes: { latitude: 1, longitude: 1 },
+          },
+        ],
+      ];
+    });
+
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 9, longitude: 9 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      hours_to_show: 48,
+      max_timeline_points: 3000,
+    });
+
+    await waitFor(() => {
+      expect(callApi.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(card.shadowRoot?.querySelector('ha-map')).toBeTruthy();
+    });
+    const firstCalls = callApi.mock.calls.length;
+    const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
+    expect(slider.max).toBe('1000');
+    expect(slider.disabled).toBe(false);
+
+    // Scrub to the start of the range → should load an earlier window
+    slider.value = '0';
+    slider.dispatchEvent(new Event('change'));
+
+    await waitFor(() => {
+      expect(callApi.mock.calls.length).toBeGreaterThan(firstCalls);
+    });
   });
 
   it('supports aspect_ratio and play toggle after history load', async () => {
