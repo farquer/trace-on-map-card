@@ -28,7 +28,7 @@ Home Assistant Lovelace card：在 **HA 默认地图**上展示实体位置历�
 ### HACS
 
 1. HACS → Frontend → 右上角 ⋮ → Custom repositories
-2. 添加本仓库，类别选 Lovelace
+2. 添加本仓库，类别选 Lovelace（仪表盘）
 3. 安装 **Trace on Map Card**
 4. 刷新浏览器
 
