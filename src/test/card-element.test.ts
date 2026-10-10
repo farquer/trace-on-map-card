@@ -466,4 +466,243 @@ describe('TraceOnMapCard element', () => {
     });
     expect(card.shadowRoot?.querySelector('ha-map')).toBeNull();
   });
+
+  it('keeps loading visible when a superseded fetch finishes first', async () => {
+    mockHaMap();
+    type Deferred = {
+      promise: Promise<unknown>;
+      resolve: (v: unknown) => void;
+    };
+    const deferreds: Deferred[] = [];
+    const callApi = vi.fn(() => {
+      let resolve!: (v: unknown) => void;
+      const promise = new Promise((r) => {
+        resolve = r;
+      });
+      deferreds.push({ promise, resolve });
+      return promise;
+    });
+
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      hours_to_show: 24,
+    });
+
+    await waitFor(() => expect(deferreds.length).toBe(1));
+    const loading = () => card.shadowRoot!.getElementById('loading');
+    expect(loading()?.style.display).not.toBe('none');
+
+    // Start a second fetch (new token) while first is in flight
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      hours_to_show: 48,
+    });
+    await waitFor(() => expect(deferreds.length).toBe(2));
+
+    // Stale (first) fetch completes — must NOT hide loading
+    deferreds[0]!.resolve([
+      [
+        {
+          entity_id: 'person.a',
+          state: 'home',
+          last_changed: '2026-01-01T10:00:00Z',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      ],
+    ]);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(loading()?.style.display).not.toBe('none');
+    expect(loading()?.textContent).toMatch(/Loading history/i);
+
+    // Active fetch completes — hide loading
+    deferreds[1]!.resolve([
+      [
+        {
+          entity_id: 'person.a',
+          state: 'home',
+          last_changed: '2026-01-01T11:00:00Z',
+          attributes: { latitude: 2, longitude: 3 },
+        },
+      ],
+    ]);
+    await waitFor(() => {
+      expect(loading()?.style.display).toBe('none');
+    });
+  });
+
+  it('shows alert and disables controls when history fetch fails', async () => {
+    mockHaMap();
+    const callApi = vi.fn(async () => {
+      throw new Error('network down');
+    });
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+    });
+    await waitFor(() => {
+      const alert = card.shadowRoot!.getElementById('alert');
+      expect(alert?.style.display).not.toBe('none');
+      expect(alert?.textContent).toMatch(/Failed to load history/i);
+    });
+    const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
+    const play = card.shadowRoot!.getElementById('play') as HTMLButtonElement;
+    expect(slider.disabled).toBe(true);
+    expect(play.disabled).toBe(true);
+  });
+
+  it('zones-only config shows empty trackable hint', async () => {
+    mockHaMap();
+    const callApi = vi.fn();
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'zone.home': {
+          entity_id: 'zone.home',
+          state: 'zoning',
+          attributes: { latitude: 0, longitude: 0, radius: 100 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['zone.home'],
+    });
+    await waitFor(() => {
+      expect(card.shadowRoot?.querySelector('ha-map')).toBeTruthy();
+      const loading = card.shadowRoot!.getElementById('loading');
+      expect(loading?.textContent).toMatch(/No trackable entities/i);
+    });
+    expect(callApi).not.toHaveBeenCalled();
+    const play = card.shadowRoot!.getElementById('play') as HTMLButtonElement;
+    expect(play.disabled).toBe(true);
+  });
+
+  it('downsamples a dense budget window to max_timeline_points', async () => {
+    mockHaMap();
+    const now = Date.now();
+    const dense = Array.from({ length: 80 }, (_, i) => ({
+      entity_id: 'person.a',
+      state: 'not_home',
+      last_changed: new Date(now - (80 - i) * 60_000).toISOString(),
+      last_updated: new Date(now - (80 - i) * 60_000).toISOString(),
+      attributes: { latitude: i, longitude: i },
+    }));
+    const callApi = vi.fn(async () => [dense]);
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 79, longitude: 79 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      hours_to_show: 24,
+      max_timeline_points: 10,
+    });
+    await waitFor(() => {
+      expect(callApi).toHaveBeenCalled();
+      const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
+        paths: Array<{ points: unknown[] }>;
+      };
+      expect(map.paths?.[0]?.points.length).toBeLessThanOrEqual(10);
+      expect(map.paths?.[0]?.points.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('flushes scrub on input via rAF', async () => {
+    mockHaMap();
+    const callApi = vi.fn(async () => [
+      [
+        {
+          entity_id: 'person.a',
+          state: 'not_home',
+          last_changed: '2026-01-01T10:00:00Z',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+        {
+          entity_id: 'person.a',
+          state: 'not_home',
+          last_changed: '2026-01-01T11:00:00Z',
+          attributes: { latitude: 3, longitude: 4 },
+        },
+      ],
+    ]);
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 3, longitude: 4 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+    });
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
+    const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
+      editableLocations: Array<{ location: [number, number] }>;
+    };
+    slider.value = '0';
+    slider.dispatchEvent(new Event('input'));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await waitFor(() => {
+      expect(map.editableLocations?.[0]?.location).toEqual([1, 2]);
+    });
+  });
 });

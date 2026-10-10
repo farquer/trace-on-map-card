@@ -350,4 +350,38 @@ describe('trace-on-map-card-editor', () => {
     );
     el.remove();
   });
+
+  it('sets and clears max_timeline_points via optional field', () => {
+    const el = document.createElement(
+      'trace-on-map-card-editor'
+    ) as TraceOnMapCardEditor;
+    document.body.appendChild(el);
+    const events: Array<{ max_timeline_points?: number }> = [];
+    el.addEventListener('config-changed', (e) => {
+      events.push((e as CustomEvent).detail.config);
+    });
+    el.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+    });
+    const input = el.shadowRoot!.querySelector(
+      'input.max-timeline-points'
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe('');
+
+    input.value = '3000';
+    input.dispatchEvent(new Event('change'));
+    expect(events.at(-1)?.max_timeline_points).toBe(3000);
+
+    // Re-query after re-render
+    const input2 = el.shadowRoot!.querySelector(
+      'input.max-timeline-points'
+    ) as HTMLInputElement;
+    expect(input2.value).toBe('3000');
+    input2.value = '';
+    input2.dispatchEvent(new Event('change'));
+    expect(events.at(-1)?.max_timeline_points).toBeUndefined();
+    el.remove();
+  });
 });
