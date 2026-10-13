@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EDITOR_ENTITY_DOMAINS,
+  EDITOR_LABELS,
+  entityFriendlyName,
   listPersonAndZoneEntities,
   TraceOnMapCardEditor,
 } from '../editor';
@@ -8,6 +10,30 @@ import {
 describe('EDITOR_ENTITY_DOMAINS', () => {
   it('only allows person and zone', () => {
     expect(EDITOR_ENTITY_DOMAINS).toEqual(['person', 'zone']);
+  });
+});
+
+describe('entityFriendlyName', () => {
+  it('returns trimmed friendly_name when present', () => {
+    const hass = {
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'home',
+          attributes: { friendly_name: '  Alice  ' },
+        },
+        'person.b': {
+          entity_id: 'person.b',
+          state: 'home',
+          attributes: {},
+        },
+      },
+      callApi: vi.fn(),
+    };
+    expect(entityFriendlyName(hass, 'person.a')).toBe('Alice');
+    expect(entityFriendlyName(hass, 'person.b')).toBeUndefined();
+    expect(entityFriendlyName(hass, '')).toBeUndefined();
+    expect(entityFriendlyName(null, 'person.a')).toBeUndefined();
   });
 });
 
@@ -198,7 +224,9 @@ describe('trace-on-map-card-editor', () => {
       'trace-on-map-card-editor'
     ) as TraceOnMapCardEditor;
     document.body.appendChild(el);
-    const events: Array<{ entities: Array<{ entity: string }> }> = [];
+    const events: Array<{
+      entities: Array<{ entity: string; name?: string }>;
+    }> = [];
     el.addEventListener('config-changed', (e) => {
       events.push((e as CustomEvent).detail.config);
     });
@@ -212,7 +240,7 @@ describe('trace-on-map-card-editor', () => {
         'person.b': {
           entity_id: 'person.b',
           state: 'home',
-          attributes: {},
+          attributes: { friendly_name: 'Bob' },
         },
       },
       callApi: vi.fn(),
@@ -227,6 +255,25 @@ describe('trace-on-map-card-editor', () => {
     select.value = 'person.b';
     select.dispatchEvent(new Event('change'));
     expect(events.at(-1)?.entities[0]?.entity).toBe('person.b');
+    expect(events.at(-1)?.entities[0]?.name).toBe('Bob');
+    el.remove();
+  });
+
+  it('renders bilingual field labels', () => {
+    const el = document.createElement(
+      'trace-on-map-card-editor'
+    ) as TraceOnMapCardEditor;
+    document.body.appendChild(el);
+    el.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: [{ entity: '' }],
+    });
+    const text = el.shadowRoot!.textContent ?? '';
+    expect(text).toContain(EDITOR_LABELS.title);
+    expect(text).toContain(EDITOR_LABELS.maxTimelinePoints);
+    expect(text).toContain(EDITOR_LABELS.entities);
+    expect(text).toContain(EDITOR_LABELS.rangeMode);
+    expect(text).toContain(EDITOR_LABELS.addEntity);
     el.remove();
   });
 
@@ -293,6 +340,11 @@ describe('trace-on-map-card-editor', () => {
           state: 'home',
           attributes: {},
         },
+        'zone.home': {
+          entity_id: 'zone.home',
+          state: 'zoning',
+          attributes: { friendly_name: 'Home' },
+        },
       },
       callApi: vi.fn(),
     };
@@ -314,6 +366,9 @@ describe('trace-on-map-card-editor', () => {
     expect(picker.includeDomains).toEqual(['person', 'zone']);
     expect(picker.hass).toBeTruthy();
 
+    const eventsTyped = events as Array<{
+      entities: Array<{ entity: string; name?: string }>;
+    }>;
     picker.dispatchEvent(
       new CustomEvent('value-changed', {
         detail: { value: 'zone.home' },
@@ -321,7 +376,8 @@ describe('trace-on-map-card-editor', () => {
         composed: true,
       })
     );
-    expect(events.at(-1)?.entities[0]?.entity).toBe('zone.home');
+    expect(eventsTyped.at(-1)?.entities[0]?.entity).toBe('zone.home');
+    expect(eventsTyped.at(-1)?.entities[0]?.name).toBe('Home');
     el.remove();
   });
 

@@ -12,14 +12,44 @@ declare global {
   }
 }
 
+/** Bilingual (中 · En) labels for the visual editor. */
+export const EDITOR_LABELS = {
+  title: '标题 · Title',
+  hoursToShow: (max: number) =>
+    `显示小时数（最近模式，1–${max}） · Hours to show — recent mode (1–${max})`,
+  rangeMode: '初始范围模式 · Initial range mode',
+  rangeModeDefault: '默认（天） · Default (day)',
+  rangeModeRecent: '最近 · Recent',
+  rangeModeDay: '天 · Day',
+  rangeModeWeek: '周 · Week',
+  maxTimelinePoints:
+    '时间轴点数上限（留空=不限制） · Max timeline points (blank = unlimited)',
+  maxTimelinePlaceholder: '不限制 · Unlimited',
+  defaultZoom: '默认缩放 · Default zoom',
+  aspectRatio: '宽高比（如 16:9） · Aspect ratio (e.g. 16:9)',
+  themeMode: '主题模式 · Theme mode',
+  autoFit: '自动适配 · auto_fit',
+  fitZones: '适配区域 · fit_zones',
+  cluster: '标记聚合 · cluster',
+  entities: '实体 · Entities',
+  entitiesHint:
+    '可选择 person（用户）或 zone（区域） · Select person or zone entities',
+  entityNamePlaceholder: '名称 · Name',
+  entitySelectPlaceholder: '选择用户/区域… · Select person / zone…',
+  entityColor: '颜色 · Color',
+  entityRemove: '移除 · Remove',
+  addEntity: '+ 添加用户/区域 · Add person / zone',
+} as const;
+
+const CONTROL_H = '40px';
+
 const EDITOR_CSS = `
   :host { display: block; }
   .editor-root { padding: 8px 0 16px; }
   .section-title {
     font-size: 0.85em;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.02em;
     color: var(--secondary-text-color, #727272);
     margin: 16px 0 8px;
   }
@@ -28,6 +58,7 @@ const EDITOR_CSS = `
   .form-row label {
     display: block;
     font-size: 0.85em;
+    line-height: 1.35;
     color: var(--secondary-text-color, #727272);
     margin-bottom: 4px;
   }
@@ -36,11 +67,14 @@ const EDITOR_CSS = `
     box-sizing: border-box;
   }
   .form-row input, .form-row select {
-    padding: 8px;
+    height: ${CONTROL_H};
+    padding: 0 10px;
     border-radius: 4px;
     border: 1px solid var(--divider-color, #e0e0e0);
     background: var(--card-background-color, #fff);
     color: var(--primary-text-color, #212121);
+    font-size: 14px;
+    line-height: 1.2;
   }
   .checks {
     display: flex;
@@ -57,11 +91,11 @@ const EDITOR_CSS = `
   }
   .entity-row {
     display: grid;
-    grid-template-columns: 1fr 110px auto auto;
+    grid-template-columns: minmax(0, 1fr) minmax(100px, 130px) ${CONTROL_H} ${CONTROL_H};
     gap: 8px;
-    align-items: end;
+    align-items: center;
     margin-bottom: 8px;
-    padding: 8px;
+    padding: 10px;
     border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: 6px;
     background: var(--secondary-background-color, #f5f5f5);
@@ -69,33 +103,54 @@ const EDITOR_CSS = `
   .entity-row ha-entity-picker,
   .entity-row ha-selector {
     min-width: 0;
-    display: block;
+    width: 100%;
+    height: ${CONTROL_H};
+    display: flex;
+    align-items: center;
+    --mdc-text-field-fill-color: var(--card-background-color, #fff);
   }
-  .entity-name-input { width: 110px; }
+  .entity-name-input,
+  .entity-picker-fallback {
+    width: 100%;
+    height: ${CONTROL_H};
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 10px;
+    border-radius: 4px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color, #212121);
+    font-size: 14px;
+    line-height: 1.2;
+  }
   input[type="color"] {
-    width: 32px;
-    height: 32px;
-    padding: 2px;
+    width: ${CONTROL_H};
+    height: ${CONTROL_H};
+    box-sizing: border-box;
+    padding: 4px;
     border: 1px solid var(--divider-color, #ccc);
     border-radius: 4px;
     cursor: pointer;
-    background: none;
+    background: var(--card-background-color, #fff);
   }
   .remove-btn {
-    background: none;
-    border: none;
+    background: var(--card-background-color, #fff);
+    border: 1px solid var(--divider-color, #e0e0e0);
     color: var(--error-color, #db4437);
     cursor: pointer;
-    padding: 4px;
+    padding: 0;
     border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 32px;
-    width: 32px;
+    height: ${CONTROL_H};
+    width: ${CONTROL_H};
+    font-size: 1.25em;
+    line-height: 1;
   }
   .remove-btn:hover {
     background: var(--error-color, #db4437);
+    border-color: var(--error-color, #db4437);
     color: #fff;
   }
   .add-btn {
@@ -103,7 +158,8 @@ const EDITOR_CSS = `
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 8px 14px;
+    padding: 10px 14px;
+    min-height: ${CONTROL_H};
     border: 1px dashed var(--primary-color, #03a9f4);
     border-radius: 6px;
     background: none;
@@ -111,9 +167,11 @@ const EDITOR_CSS = `
     cursor: pointer;
     font-size: 0.9em;
     width: 100%;
+    box-sizing: border-box;
   }
   .hint {
     font-size: 0.75em;
+    line-height: 1.4;
     color: var(--secondary-text-color, #727272);
     margin: 0 0 8px;
   }
@@ -251,14 +309,15 @@ class TraceOnMapCardEditor extends HTMLElement {
     const root = document.createElement('div');
     root.className = 'editor-root';
 
+    const L = EDITOR_LABELS;
     root.appendChild(
-      this._textRow('Title', config.title ?? '', (v) =>
+      this._textRow(L.title, config.title ?? '', (v) =>
         this._update({ title: v || undefined })
       )
     );
     root.appendChild(
       this._numberRow(
-        `Hours to show — 最近 mode (1–${MAX_HOURS_TO_SHOW})`,
+        L.hoursToShow(MAX_HOURS_TO_SHOW),
         clampHours(config.hours_to_show),
         MIN_HOURS_TO_SHOW,
         MAX_HOURS_TO_SHOW,
@@ -269,14 +328,14 @@ class TraceOnMapCardEditor extends HTMLElement {
       const row = document.createElement('div');
       row.className = 'form-row';
       const lab = document.createElement('label');
-      lab.textContent = 'Initial range mode';
+      lab.textContent = L.rangeMode;
       const sel = document.createElement('select');
       sel.className = 'range-mode';
       const options: Array<{ value: string; label: string }> = [
-        { value: '', label: 'Default (天)' },
-        { value: 'recent', label: '最近' },
-        { value: 'day', label: '天' },
-        { value: 'week', label: '周' },
+        { value: '', label: L.rangeModeDefault },
+        { value: 'recent', label: L.rangeModeRecent },
+        { value: 'day', label: L.rangeModeDay },
+        { value: 'week', label: L.rangeModeWeek },
       ];
       for (const o of options) {
         const opt = document.createElement('option');
@@ -310,7 +369,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     }
     root.appendChild(
       this._optionalNumberRow(
-        'Max timeline points (blank = unlimited)',
+        L.maxTimelinePoints,
         config.max_timeline_points,
         1,
         100_000,
@@ -330,12 +389,13 @@ class TraceOnMapCardEditor extends HTMLElement {
             return;
           }
           this._update({ max_timeline_points: v });
-        }
+        },
+        L.maxTimelinePlaceholder
       )
     );
     root.appendChild(
       this._numberRow(
-        'Default zoom',
+        L.defaultZoom,
         clampZoom(config.default_zoom),
         1,
         20,
@@ -343,7 +403,7 @@ class TraceOnMapCardEditor extends HTMLElement {
       )
     );
     root.appendChild(
-      this._textRow('Aspect ratio (e.g. 16:9)', config.aspect_ratio ?? '', (v) =>
+      this._textRow(L.aspectRatio, config.aspect_ratio ?? '', (v) =>
         this._update({ aspect_ratio: v || undefined })
       )
     );
@@ -352,7 +412,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     const themeRow = document.createElement('div');
     themeRow.className = 'form-row';
     const themeLabel = document.createElement('label');
-    themeLabel.textContent = 'Theme mode';
+    themeLabel.textContent = L.themeMode;
     const theme = document.createElement('select');
     for (const mode of ['auto', 'light', 'dark'] as const) {
       const opt = document.createElement('option');
@@ -376,17 +436,17 @@ class TraceOnMapCardEditor extends HTMLElement {
     const checks = document.createElement('div');
     checks.className = 'checks';
     checks.appendChild(
-      this._check('auto_fit', config.auto_fit !== false, (v) =>
+      this._check(L.autoFit, config.auto_fit !== false, (v) =>
         this._update({ auto_fit: v })
       )
     );
     checks.appendChild(
-      this._check('fit_zones', !!config.fit_zones, (v) =>
+      this._check(L.fitZones, !!config.fit_zones, (v) =>
         this._update({ fit_zones: v })
       )
     );
     checks.appendChild(
-      this._check('cluster', config.cluster !== false, (v) =>
+      this._check(L.cluster, config.cluster !== false, (v) =>
         this._update({ cluster: v })
       )
     );
@@ -394,12 +454,12 @@ class TraceOnMapCardEditor extends HTMLElement {
 
     const entTitle = document.createElement('div');
     entTitle.className = 'section-title';
-    entTitle.textContent = 'Entities';
+    entTitle.textContent = L.entities;
     root.appendChild(entTitle);
 
     const hint = document.createElement('p');
     hint.className = 'hint';
-    hint.textContent = '可选择 person（用户）或 zone（区域）';
+    hint.textContent = L.entitiesHint;
     root.appendChild(hint);
 
     entities.forEach((ec, idx) => {
@@ -409,7 +469,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.className = 'add-btn';
-    addBtn.textContent = '+ Add person / zone';
+    addBtn.textContent = L.addEntity;
     addBtn.addEventListener('click', () => {
       this._update({ entities: [...entities, { entity: '' }] });
     });
@@ -465,7 +525,8 @@ class TraceOnMapCardEditor extends HTMLElement {
     value: number | undefined,
     min: number,
     max: number,
-    onChange: (v: number | null) => void
+    onChange: (v: number | null) => void,
+    placeholder = EDITOR_LABELS.maxTimelinePlaceholder
   ): HTMLElement {
     const row = document.createElement('div');
     row.className = 'form-row';
@@ -476,7 +537,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     input.min = String(min);
     input.max = String(max);
     input.className = 'max-timeline-points';
-    input.placeholder = 'Unlimited';
+    input.placeholder = placeholder;
     input.value = value != null ? String(value) : '';
     input.addEventListener('change', () => {
       const raw = input.value.trim();
@@ -494,6 +555,28 @@ class TraceOnMapCardEditor extends HTMLElement {
     row.appendChild(lab);
     row.appendChild(input);
     return row;
+  }
+
+  /** Apply entity id change and default name from friendly_name. */
+  private _applyEntitySelection(
+    allEntities: EntityConfig[],
+    idx: number,
+    entityId: string
+  ): void {
+    const updated = [...allEntities];
+    const next: EntityConfig = {
+      ...updated[idx],
+      entity: entityId,
+    };
+    if (!entityId) {
+      delete next.name;
+    } else {
+      const friendly = entityFriendlyName(this._hass, entityId);
+      if (friendly) next.name = friendly;
+      else delete next.name;
+    }
+    updated[idx] = next;
+    this._update({ entities: updated });
   }
 
   private _check(
@@ -551,9 +634,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     if (picker) {
       picker.addEventListener('value-changed', (e: Event) => {
         const newVal = (e as CustomEvent<{ value: string }>).detail?.value ?? '';
-        const updated = [...allEntities];
-        updated[idx] = { ...updated[idx], entity: newVal };
-        this._update({ entities: updated });
+        this._applyEntitySelection(allEntities, idx, newVal);
       });
       row.appendChild(picker);
     } else {
@@ -562,7 +643,7 @@ class TraceOnMapCardEditor extends HTMLElement {
       select.className = 'entity-picker-fallback';
       const empty = document.createElement('option');
       empty.value = '';
-      empty.textContent = 'Select person / zone…';
+      empty.textContent = EDITOR_LABELS.entitySelectPlaceholder;
       select.appendChild(empty);
       const options = listPersonAndZoneEntities(this._hass);
       for (const opt of options) {
@@ -581,9 +662,7 @@ class TraceOnMapCardEditor extends HTMLElement {
         select.appendChild(o);
       }
       select.addEventListener('change', () => {
-        const updated = [...allEntities];
-        updated[idx] = { ...updated[idx], entity: select.value };
-        this._update({ entities: updated });
+        this._applyEntitySelection(allEntities, idx, select.value);
       });
       row.appendChild(select);
     }
@@ -591,7 +670,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     const nameInput = document.createElement('input');
     nameInput.className = 'entity-name-input';
     nameInput.type = 'text';
-    nameInput.placeholder = 'Name';
+    nameInput.placeholder = EDITOR_LABELS.entityNamePlaceholder;
     nameInput.value = ec.name ?? '';
     nameInput.addEventListener('change', () => {
       const updated = [...allEntities];
@@ -606,7 +685,7 @@ class TraceOnMapCardEditor extends HTMLElement {
     const colorInput = document.createElement('input');
     colorInput.type = 'color';
     colorInput.value = ec.color ?? ENTITY_COLORS[idx % ENTITY_COLORS.length];
-    colorInput.title = 'Color';
+    colorInput.title = EDITOR_LABELS.entityColor;
     colorInput.addEventListener('change', () => {
       const updated = [...allEntities];
       updated[idx] = { ...updated[idx], color: colorInput.value };
@@ -617,7 +696,8 @@ class TraceOnMapCardEditor extends HTMLElement {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-btn';
-    removeBtn.title = 'Remove';
+    removeBtn.title = EDITOR_LABELS.entityRemove;
+    removeBtn.setAttribute('aria-label', EDITOR_LABELS.entityRemove);
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       if (allEntities.length <= 1) return;
@@ -629,6 +709,18 @@ class TraceOnMapCardEditor extends HTMLElement {
 
     return row;
   }
+}
+
+/** Friendly name for an entity id, if present. */
+export function entityFriendlyName(
+  hass: HomeAssistant | null | undefined,
+  entityId: string
+): string | undefined {
+  if (!entityId || !hass?.states) return undefined;
+  const raw = hass.states[entityId]?.attributes?.friendly_name;
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed || undefined;
 }
 
 export function listPersonAndZoneEntities(
