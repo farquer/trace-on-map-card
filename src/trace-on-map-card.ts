@@ -162,23 +162,23 @@ const CARD_CSS = `
   }
   .range-nav {
     display: grid;
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
     align-items: center;
     gap: 8px;
     max-width: 320px;
     width: 100%;
     margin: 0 auto;
-    min-height: 42px;
+    min-height: 55px;
   }
   .range-nav-btn {
-    width: 42px;
-    height: 42px;
+    width: 48px;
+    height: 55px;
     border: 1px solid var(--divider-color, #e0e0e0);
     background: var(--secondary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
     border-radius: 8px;
     cursor: pointer;
-    font-size: 1.15em;
+    font-size: 1.2em;
     line-height: 1;
     padding: 0;
     display: flex;
@@ -201,7 +201,7 @@ const CARD_CSS = `
   }
   .range-label-slot {
     min-width: 0;
-    height: 42px;
+    height: 55px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -216,7 +216,7 @@ const CARD_CSS = `
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 42px;
+    height: 55px;
     padding: 0 10px;
     text-align: center;
     font-size: 0.8125em;
@@ -229,7 +229,7 @@ const CARD_CSS = `
   }
   .range-date-fallback {
     width: 100%;
-    height: 42px;
+    height: 55px;
     box-sizing: border-box;
     border: none;
     background: transparent;
@@ -248,9 +248,8 @@ const CARD_CSS = `
   .range-label-slot ha-date-input,
   .range-label-slot ha-selector {
     width: 100%;
-    height: 42px;
+    height: 55px;
     min-height: 42px;
-    display: flex;
     align-items: center;
     --mdc-text-field-fill-color: transparent;
     --mdc-text-field-idle-line-color: transparent;
