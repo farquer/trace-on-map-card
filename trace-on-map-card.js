@@ -1338,13 +1338,21 @@ function clipTimelineToIndex(points, upToIndex) {
     return points.slice(0, end + 1);
 }
 
-/** Build HA history/period path with encoded entity ids. */
-function buildHistoryApiPath(startTime, entityIds) {
+/** Build HA history/period path with encoded entity ids.
+ *
+ * HA defaults `end_time` to start+1 day when omitted — week/multi-day
+ * ranges MUST pass `endTime` or only the first day is returned.
+ */
+function buildHistoryApiPath(startTime, entityIds, endTime) {
     const filtered = entityIds.filter((id) => id.length > 0);
     const encoded = filtered.map((id) => encodeURIComponent(id)).join(',');
-    return (`history/period/${startTime.toISOString()}` +
+    let path = `history/period/${startTime.toISOString()}` +
         `?filter_entity_id=${encoded}` +
-        `&significant_changes_only=0`);
+        `&significant_changes_only=0`;
+    if (endTime) {
+        path += `&end_time=${encodeURIComponent(endTime.toISOString())}`;
+    }
+    return path;
 }
 function shouldAutoRefetchHistory(options) {
     if (options.playing)
@@ -2723,7 +2731,8 @@ class TraceOnMapCard extends HTMLElement {
         this._timeSliderMode = false;
     }
     async _fetchHistoryUnlimited(token, startMs, endMs, hoursToShow, configs, entityIdList) {
-        const path = buildHistoryApiPath(new Date(startMs), entityIdList);
+        // Always pass end_time: HA defaults to start+1d when omitted (breaks week).
+        const path = buildHistoryApiPath(new Date(startMs), entityIdList, new Date(endMs));
         const data = await this._hass.callApi('GET', path);
         if (token !== this._fetchToken)
             return;
@@ -2737,7 +2746,7 @@ class TraceOnMapCard extends HTMLElement {
         this._timelineStartMs = startMs;
         this._timelineEndMs = endMs;
         let points = extractTimelinePoints(data, configs);
-        // Day/week: HA history has no end bound — clip to half-open [start, end).
+        // Day/week: also clip client-side to half-open [start, end).
         if (this._rangeMode !== 'recent') {
             points = filterPointsInWindow(points, startMs, endMs, false);
         }
@@ -2770,7 +2779,7 @@ class TraceOnMapCard extends HTMLElement {
             return;
         this._loadingWindowIds.add(window.id);
         try {
-            const path = buildHistoryApiPath(new Date(window.startMs), entityIdList);
+            const path = buildHistoryApiPath(new Date(window.startMs), entityIdList, new Date(window.endMs));
             const data = await this._hass.callApi('GET', path);
             if (token !== this._fetchToken)
                 return;

@@ -1,15 +1,23 @@
-/** Build HA history/period path with encoded entity ids. */
+/** Build HA history/period path with encoded entity ids.
+ *
+ * HA defaults `end_time` to start+1 day when omitted — week/multi-day
+ * ranges MUST pass `endTime` or only the first day is returned.
+ */
 export function buildHistoryApiPath(
   startTime: Date,
-  entityIds: string[]
+  entityIds: string[],
+  endTime?: Date
 ): string {
   const filtered = entityIds.filter((id) => id.length > 0);
   const encoded = filtered.map((id) => encodeURIComponent(id)).join(',');
-  return (
+  let path =
     `history/period/${startTime.toISOString()}` +
     `?filter_entity_id=${encoded}` +
-    `&significant_changes_only=0`
-  );
+    `&significant_changes_only=0`;
+  if (endTime) {
+    path += `&end_time=${encodeURIComponent(endTime.toISOString())}`;
+  }
+  return path;
 }
 
 export function shouldAutoRefetchHistory(options: {

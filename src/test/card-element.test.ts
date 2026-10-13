@@ -1057,6 +1057,52 @@ describe('TraceOnMapCard element', () => {
     vi.useRealTimers();
   });
 
+  it('week mode history request includes end_time beyond one day', async () => {
+    mockHaMap();
+    const tz = 'Asia/Shanghai';
+    const nowMs = Date.UTC(2026, 9, 8, 8, 0, 0);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const callApi = vi.fn(async () => [
+      [
+        {
+          entity_id: 'person.a',
+          state: 'not_home',
+          last_changed: new Date(Date.UTC(2026, 9, 6, 4, 0, 0)).toISOString(),
+          attributes: { latitude: 2, longitude: 2 },
+        },
+      ],
+    ]);
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3', time_zone: tz },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 2, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      range_mode: 'week',
+    });
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const path = String(callApi.mock.calls[0]![1]);
+    expect(path).toContain('end_time=');
+    // Window is Mon 10-05 00:00 CST → Mon 10-12 00:00 CST (7 days)
+    const endEnc = path.split('end_time=')[1] ?? '';
+    const endMs = new Date(decodeURIComponent(endEnc.split('&')[0]!)).getTime();
+    const startIso = path.split('history/period/')[1]?.split('?')[0] ?? '';
+    const startMs = new Date(decodeURIComponent(startIso)).getTime();
+    expect(endMs - startMs).toBe(7 * 24 * 3600 * 1000);
+  });
+
   it('week mode scrubs by calendar time, not day-1 point density', async () => {
     mockHaMap();
     const tz = 'Asia/Shanghai';

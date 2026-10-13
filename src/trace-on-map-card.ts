@@ -1049,7 +1049,12 @@ class TraceOnMapCard extends HTMLElement {
     configs: ReturnType<typeof normalizeEntityConfigs>,
     entityIdList: string[]
   ): Promise<void> {
-    const path = buildHistoryApiPath(new Date(startMs), entityIdList);
+    // Always pass end_time: HA defaults to start+1d when omitted (breaks week).
+    const path = buildHistoryApiPath(
+      new Date(startMs),
+      entityIdList,
+      new Date(endMs)
+    );
     const data: HistoryState[][] | Record<string, HistoryState[]> =
       await this._hass!.callApi('GET', path);
     if (token !== this._fetchToken) return;
@@ -1065,7 +1070,7 @@ class TraceOnMapCard extends HTMLElement {
     this._timelineStartMs = startMs;
     this._timelineEndMs = endMs;
     let points = extractTimelinePoints(data, configs);
-    // Day/week: HA history has no end bound — clip to half-open [start, end).
+    // Day/week: also clip client-side to half-open [start, end).
     if (this._rangeMode !== 'recent') {
       points = filterPointsInWindow(points, startMs, endMs, false);
     }
@@ -1128,7 +1133,11 @@ class TraceOnMapCard extends HTMLElement {
     if (this._loadingWindowIds.has(window.id)) return;
     this._loadingWindowIds.add(window.id);
     try {
-      const path = buildHistoryApiPath(new Date(window.startMs), entityIdList);
+      const path = buildHistoryApiPath(
+        new Date(window.startMs),
+        entityIdList,
+        new Date(window.endMs)
+      );
       const data: HistoryState[][] | Record<string, HistoryState[]> =
         await this._hass!.callApi('GET', path);
       if (token !== this._fetchToken) return;

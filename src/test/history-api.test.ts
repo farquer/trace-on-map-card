@@ -13,6 +13,7 @@ describe('buildHistoryApiPath', () => {
     expect(path).toContain(
       `filter_entity_id=${encodeURIComponent('device_tracker.phone')},${encodeURIComponent('person.alice/test')}`
     );
+    expect(path).not.toContain('end_time=');
   });
 
   it('skips empty ids', () => {
@@ -22,6 +23,15 @@ describe('buildHistoryApiPath', () => {
     ]);
     expect(path).toContain(encodeURIComponent('device_tracker.a'));
     expect(path).not.toContain('filter_entity_id=,');
+  });
+
+  it('appends encoded end_time so HA does not default to start+1d', () => {
+    const start = new Date('2026-10-05T16:00:00.000Z');
+    const end = new Date('2026-10-12T16:00:00.000Z');
+    const path = buildHistoryApiPath(start, ['person.a'], end);
+    expect(path).toContain(
+      `end_time=${encodeURIComponent('2026-10-12T16:00:00.000Z')}`
+    );
   });
 });
 
