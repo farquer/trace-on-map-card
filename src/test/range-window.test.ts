@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_RANGE_MODE,
   canGoNext,
   canGoPrev,
   clampRangeOffset,
@@ -18,12 +19,17 @@ describe('parseRangeMode / clamp / canGo', () => {
     expect(parseRangeMode('week')).toBe('week');
     expect(parseRangeMode('recent')).toBe('recent');
     expect(parseRangeMode('nope')).toBeUndefined();
+    expect(parseRangeMode(null)).toBeUndefined();
+    expect(DEFAULT_RANGE_MODE).toBe('day');
   });
 
-  it('clamps offset to <= 0', () => {
+  it('clamps offset to <= 0 integer', () => {
     expect(clampRangeOffset(0)).toBe(0);
     expect(clampRangeOffset(-3)).toBe(-3);
     expect(clampRangeOffset(5)).toBe(0);
+    expect(clampRangeOffset(-1.9)).toBe(-2);
+    expect(clampRangeOffset(Number.NaN)).toBe(0);
+    expect(clampRangeOffset(Number.POSITIVE_INFINITY)).toBe(0);
   });
 
   it('canGoNext only when day/week and offset < 0', () => {
@@ -31,6 +37,7 @@ describe('parseRangeMode / clamp / canGo', () => {
     expect(canGoNext('day', 0)).toBe(false);
     expect(canGoNext('day', -1)).toBe(true);
     expect(canGoNext('week', -2)).toBe(true);
+    expect(canGoNext('week', 3)).toBe(false);
   });
 
   it('canGoPrev for day/week', () => {
@@ -41,14 +48,27 @@ describe('parseRangeMode / clamp / canGo', () => {
 });
 
 describe('resolveHaTimeZone', () => {
-  it('uses provided zone', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uses provided zone and trims', () => {
     expect(resolveHaTimeZone('Asia/Shanghai')).toBe('Asia/Shanghai');
+    expect(resolveHaTimeZone('  UTC  ')).toBe('UTC');
   });
 
   it('falls back when empty', () => {
     const tz = resolveHaTimeZone('');
     expect(typeof tz).toBe('string');
     expect(tz.length).toBeGreaterThan(0);
+    expect(resolveHaTimeZone(null).length).toBeGreaterThan(0);
+  });
+
+  it('falls back to UTC when Intl throws', () => {
+    vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(() => {
+      throw new Error('no intl');
+    });
+    expect(resolveHaTimeZone(undefined)).toBe('UTC');
   });
 });
 
@@ -96,6 +116,27 @@ describe('Shanghai calendar windows', () => {
     expect(w.label).toBe('最近 24 小时');
     expect(w.endMs).toBe(nowMs);
     expect(w.startMs).toBe(nowMs - 24 * 3600 * 1000);
+  });
+
+  it('recent floors hours and clamps minimum to 1', () => {
+    const nowMs = 1_000_000;
+    expect(getRecentWindow(nowMs, 24.9).label).toBe('最近 24 小时');
+    expect(getRecentWindow(nowMs, 0).startMs).toBe(nowMs - 3600_000);
+  });
+
+  it('week starting on Monday stays that week', () => {
+    // 2026-10-12 is Monday in Shanghai
+    const nowMs = zonedWallTimeToUtcMs(2026, 10, 12, 9, 0, 0, tz);
+    const w = getWeekWindow(nowMs, tz, 0);
+    expect(w.label).toBe('10-12 ~ 10-18');
+  });
+
+  it('week containing Sunday includes prior Monday', () => {
+    // 2026-10-18 is Sunday → still 10-12 ~ 10-18
+    const nowMs = zonedWallTimeToUtcMs(2026, 10, 18, 18, 0, 0, tz);
+    const w = getWeekWindow(nowMs, tz, 0);
+    expect(w.label).toBe('10-12 ~ 10-18');
+    expect(w.startMs).toBe(zonedWallTimeToUtcMs(2026, 10, 12, 0, 0, 0, tz));
   });
 
   it('resolveRangeWindow dispatches by mode', () => {

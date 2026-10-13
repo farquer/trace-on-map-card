@@ -800,4 +800,186 @@ describe('TraceOnMapCard element', () => {
       expect(label.textContent).toMatch(/最近 24/);
     });
   });
+
+  it('week mode from config; next returns to current week and disables', async () => {
+    mockHaMap();
+    const callApi = vi.fn(async (_m: string, path: string) => {
+      const startIso = path.split('history/period/')[1]?.split('?')[0] ?? '';
+      const start = new Date(decodeURIComponent(startIso)).getTime();
+      return [
+        [
+          {
+            entity_id: 'person.a',
+            state: 'not_home',
+            last_changed: new Date(start + 3600_000).toISOString(),
+            attributes: { latitude: 1, longitude: 2 },
+          },
+        ],
+      ];
+    });
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3', time_zone: 'Asia/Shanghai' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      range_mode: 'week',
+    });
+
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const weekBtn = card.shadowRoot!.querySelector(
+      '.range-mode-btn[data-mode="week"]'
+    ) as HTMLButtonElement;
+    const prev = card.shadowRoot!.getElementById(
+      'range-prev'
+    ) as HTMLButtonElement;
+    const next = card.shadowRoot!.getElementById(
+      'range-next'
+    ) as HTMLButtonElement;
+    const label = card.shadowRoot!.getElementById('range-label')!;
+
+    expect(weekBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(label.textContent).toMatch(/^\d{2}-\d{2} ~ \d{2}-\d{2}$/);
+    expect(next.disabled).toBe(true);
+
+    prev.click();
+    await waitFor(() => expect(next.disabled).toBe(false));
+    const calls = callApi.mock.calls.length;
+    next.click();
+    await waitFor(() => {
+      expect(callApi.mock.calls.length).toBeGreaterThan(calls);
+      expect(next.disabled).toBe(true);
+    });
+
+    // Same mode click is a no-op
+    const before = callApi.mock.calls.length;
+    weekBtn.click();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(callApi.mock.calls.length).toBe(before);
+  });
+
+  it('day mode clips history points outside the civil day window', async () => {
+    mockHaMap();
+    const tz = 'Asia/Shanghai';
+    // Fixed "now": 2026-10-13 15:00 CST
+    const nowMs = Date.UTC(2026, 9, 13, 7, 0, 0);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+
+    const inDay = Date.UTC(2026, 9, 13, 3, 0, 0); // 11:00 CST
+    const outside = Date.UTC(2026, 9, 14, 1, 0, 0); // next day CST
+    const callApi = vi.fn(async () => [
+      [
+        {
+          entity_id: 'person.a',
+          state: 'not_home',
+          last_changed: new Date(inDay).toISOString(),
+          attributes: { latitude: 1, longitude: 2 },
+        },
+        {
+          entity_id: 'person.a',
+          state: 'not_home',
+          last_changed: new Date(outside).toISOString(),
+          attributes: { latitude: 9, longitude: 9 },
+        },
+      ],
+    ]);
+
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3', time_zone: tz },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      range_mode: 'day',
+    });
+
+    await waitFor(() => {
+      expect(callApi).toHaveBeenCalled();
+      const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
+        paths: Array<{ points: unknown[] }>;
+      };
+      expect(map.paths?.[0]?.points.length).toBe(1);
+    });
+  });
+
+  it('skips auto-refetch for past day windows', async () => {
+    mockHaMap();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-10-13T07:00:00.000Z'));
+
+    const callApi = vi.fn(async (_m: string, path: string) => {
+      const startIso = path.split('history/period/')[1]?.split('?')[0] ?? '';
+      const start = new Date(decodeURIComponent(startIso)).getTime();
+      return [
+        [
+          {
+            entity_id: 'person.a',
+            state: 'not_home',
+            last_changed: new Date(start + 3600_000).toISOString(),
+            attributes: { latitude: 1, longitude: 2 },
+          },
+        ],
+      ];
+    });
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    const hass = {
+      config: { version: '2026.9.3', time_zone: 'Asia/Shanghai' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.hass = hass;
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      range_mode: 'day',
+    });
+
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const prev = card.shadowRoot!.getElementById(
+      'range-prev'
+    ) as HTMLButtonElement;
+    prev.click();
+    await waitFor(() => expect(callApi.mock.calls.length).toBeGreaterThanOrEqual(2));
+    const afterPrev = callApi.mock.calls.length;
+
+    vi.advanceTimersByTime(65_000);
+    card.hass = { ...hass };
+    await Promise.resolve();
+    expect(callApi.mock.calls.length).toBe(afterPrev);
+
+    vi.useRealTimers();
+  });
 });
