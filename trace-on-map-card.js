@@ -1878,114 +1878,162 @@ const CARD_CSS = `
     background: color-mix(in srgb, var(--error-color, #c62828) 8%, transparent);
   }
   .timeline-container {
-    padding: 12px 16px 10px;
+    padding: 12px 16px 12px;
     background: var(--card-background-color, #fff);
     border-top: 1px solid var(--divider-color, #e0e0e0);
   }
   .range-toolbar {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 10px;
+    margin: 0 0 12px;
+    padding: 0 0 12px;
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
   }
   .range-modes {
     display: flex;
-    gap: 4px;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 10px;
+    background: var(--secondary-background-color, #f5f5f5);
+    border: 1px solid var(--divider-color, #e0e0e0);
   }
   .range-mode-btn {
     flex: 1;
-    border: 1px solid var(--divider-color, #e0e0e0);
-    background: var(--secondary-background-color, #f5f5f5);
-    color: var(--primary-text-color, #212121);
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 0.8em;
+    border: none;
+    background: transparent;
+    color: var(--secondary-text-color, #727272);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 0.8125em;
+    font-weight: 500;
     line-height: 1.2;
     cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .range-mode-btn:hover:not([aria-pressed="true"]) {
+    color: var(--primary-text-color, #212121);
+    background: color-mix(in srgb, var(--primary-text-color, #212121) 6%, transparent);
   }
   .range-mode-btn[aria-pressed="true"] {
     background: var(--primary-color, #03a9f4);
     color: var(--text-primary-color, #fff);
-    border-color: var(--primary-color, #03a9f4);
   }
   .range-mode-btn:focus-visible {
     outline: 2px solid var(--primary-color, #03a9f4);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
   .range-nav {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 28px;
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    align-items: stretch;
+    gap: 6px;
+    max-width: 260px;
+    width: 100%;
+    margin: 0 auto;
   }
   .range-nav-btn {
-    width: 32px;
-    height: 28px;
+    width: 36px;
+    height: 36px;
     border: 1px solid var(--divider-color, #e0e0e0);
     background: var(--secondary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 0.95em;
+    font-size: 1.1em;
     line-height: 1;
     padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .range-nav-btn:hover:not(:disabled) {
+    border-color: var(--primary-color, #03a9f4);
+    background: color-mix(in srgb, var(--primary-color, #03a9f4) 12%, transparent);
   }
   .range-nav-btn:disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: not-allowed;
   }
   .range-nav-btn:focus-visible {
     outline: 2px solid var(--primary-color, #03a9f4);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
   .range-label-slot {
-    flex: 1;
     min-width: 0;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
   }
   .range-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 0 10px;
     text-align: center;
-    font-size: 0.8em;
+    font-size: 0.8125em;
+    font-weight: 500;
     font-variant-numeric: tabular-nums;
-    color: var(--secondary-text-color, #727272);
+    color: var(--primary-text-color, #212121);
+    background: var(--secondary-background-color, #f5f5f5);
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 8px;
+    box-sizing: border-box;
   }
   .range-date-fallback {
     width: 100%;
-    max-width: 11em;
+    height: 36px;
+    box-sizing: border-box;
     border: 1px solid var(--divider-color, #e0e0e0);
-    background: var(--card-background-color, #fff);
+    background: var(--secondary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
-    border-radius: 6px;
-    padding: 4px 6px;
-    font-size: 0.8em;
+    border-radius: 8px;
+    padding: 0 8px;
+    font-size: 0.8125em;
+    font-weight: 500;
     font-variant-numeric: tabular-nums;
+    text-align: center;
+    cursor: pointer;
+  }
+  .range-date-fallback:hover {
+    border-color: var(--primary-color, #03a9f4);
   }
   .range-label-slot ha-date-input,
   .range-label-slot ha-selector {
     width: 100%;
-    max-width: 12em;
+    height: 36px;
+    --mdc-text-field-fill-color: var(--secondary-background-color, #f5f5f5);
+    --mdc-text-field-idle-line-color: transparent;
+    --mdc-text-field-hover-line-color: var(--primary-color, #03a9f4);
+    --mdc-theme-primary: var(--primary-color, #03a9f4);
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 8px;
+    overflow: hidden;
+    box-sizing: border-box;
   }
   .timeline-controls {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
   }
   .play-pause-btn {
     background: var(--primary-color, #03a9f4);
     color: var(--text-primary-color, #fff);
     border: none;
     border-radius: 50%;
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
     padding: 0;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--primary-color, #03a9f4) 35%, transparent);
     transition: filter 0.15s ease, transform 0.15s ease;
   }
   .play-pause-btn:hover:not(:disabled) {
@@ -2003,11 +2051,11 @@ const CARD_CSS = `
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
   .timeline-slider {
     width: 100%;
-    height: 22px;
+    height: 20px;
     margin: 0;
     cursor: pointer;
     accent-color: var(--primary-color, #03a9f4);
@@ -2017,13 +2065,15 @@ const CARD_CSS = `
     justify-content: space-between;
     gap: 8px;
     font-size: 0.7em;
-    line-height: 1.2;
+    line-height: 1.25;
     color: var(--secondary-text-color, #727272);
+    font-variant-numeric: tabular-nums;
   }
   .timeline-time {
-    font-size: 0.8em;
+    font-size: 0.8125em;
+    font-weight: 500;
     font-variant-numeric: tabular-nums;
-    color: var(--secondary-text-color, #727272);
+    color: var(--primary-text-color, #212121);
     white-space: nowrap;
     min-width: 3.25em;
     text-align: right;
@@ -2033,23 +2083,24 @@ const CARD_CSS = `
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px 14px;
-    padding: 4px 16px 14px;
+    gap: 8px 16px;
+    padding: 10px 16px 12px;
+    border-top: 1px solid var(--divider-color, #e0e0e0);
+    background: color-mix(in srgb, var(--secondary-background-color, #f5f5f5) 55%, transparent);
   }
   .legend-item {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.8em;
+    gap: 7px;
+    font-size: 0.8125em;
     line-height: 1.2;
     color: var(--primary-text-color, #212121);
   }
   .legend-dot {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--divider-color, #e0e0e0) 80%, transparent);
   }
   .loading-msg {
     padding: 6px 16px 8px;
@@ -2063,6 +2114,7 @@ const CARD_CSS = `
     cursor: not-allowed;
     filter: none;
     transform: none;
+    box-shadow: none;
   }
 `;
 class TraceOnMapCard extends HTMLElement {
