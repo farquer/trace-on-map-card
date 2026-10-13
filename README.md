@@ -79,7 +79,7 @@ aspect_ratio: "16:9"
 | `aspect_ratio` | — | 如 `16:9`；不设则固定高度 |
 | `title` | — | 标题 |
 
-卡片底部可切换 **最近 / 天 / 周**：天、周按 HA `config.time_zone`（缺失则回退浏览器本地时区）对齐日历；周为周一至周日；当日/本周时「›」禁用。若要恢复旧的滚动小时体验，设 `range_mode: recent`。
+卡片底部可切换 **最近 / 天 / 周**：天、周按 HA `config.time_zone`（缺失则回退浏览器本地时区）对齐日历；周为周一至周日；当日/本周时「›」禁用。**天**模式可点日期跳转（优先 HA 原生 `ha-date-input` / `ha-selector`，否则浏览器日期框；无需额外插件）。若要恢复旧的滚动小时体验，设 `range_mode: recent`。
 
 实际可展示的历史长度还受 Home Assistant **Recorder** 保留策略限制。长跨度（周或 `hours_to_show: 720`）建议配置 `max_timeline_points`（例如 `3000`），避免一次拉全量导致卡顿。
 

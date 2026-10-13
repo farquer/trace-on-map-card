@@ -776,17 +776,23 @@ describe('TraceOnMapCard element', () => {
       'range-next'
     ) as HTMLButtonElement;
     const label = card.shadowRoot!.getElementById('range-label')!;
+    const dateInput = card.shadowRoot!.querySelector(
+      'input.range-date-fallback'
+    ) as HTMLInputElement;
 
     expect(dayBtn.getAttribute('aria-pressed')).toBe('true');
     expect(next.disabled).toBe(true);
     expect(prev.disabled).toBe(false);
-    expect(label.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(dateInput).toBeTruthy();
+    expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(label.style.display).toBe('none');
 
     const callsAfterDay = callApi.mock.calls.length;
     prev.click();
     await waitFor(() => {
       expect(callApi.mock.calls.length).toBeGreaterThan(callsAfterDay);
       expect(next.disabled).toBe(false);
+      expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
     const callsAfterPrev = callApi.mock.calls.length;
@@ -799,6 +805,72 @@ describe('TraceOnMapCard element', () => {
       ).toBe('none');
       expect(label.textContent).toMatch(/最近 24/);
     });
+  });
+
+  it('day date fallback jumps to a past civil day', async () => {
+    mockHaMap();
+    const tz = 'Asia/Shanghai';
+    const nowMs = Date.UTC(2026, 9, 13, 7, 0, 0);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+
+    const callApi = vi.fn(async (_m: string, path: string) => {
+      const startIso = path.split('history/period/')[1]?.split('?')[0] ?? '';
+      const start = new Date(decodeURIComponent(startIso)).getTime();
+      return [
+        [
+          {
+            entity_id: 'person.a',
+            state: 'not_home',
+            last_changed: new Date(start + 3600_000).toISOString(),
+            attributes: { latitude: 1, longitude: 2 },
+          },
+        ],
+      ];
+    });
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3', time_zone: tz },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 1, longitude: 2 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      range_mode: 'day',
+    });
+
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const dateInput = card.shadowRoot!.querySelector(
+      'input.range-date-fallback'
+    ) as HTMLInputElement;
+    expect(dateInput.value).toBe('2026-10-13');
+    expect(dateInput.max).toBe('2026-10-13');
+
+    const before = callApi.mock.calls.length;
+    dateInput.value = '2026-10-10';
+    dateInput.dispatchEvent(new Event('change'));
+
+    await waitFor(() => {
+      expect(callApi.mock.calls.length).toBeGreaterThan(before);
+      expect(dateInput.value).toBe('2026-10-10');
+      const next = card.shadowRoot!.getElementById(
+        'range-next'
+      ) as HTMLButtonElement;
+      expect(next.disabled).toBe(false);
+    });
+
+    const startPath = String(callApi.mock.calls.at(-1)![1]);
+    // 2026-10-10 00:00 CST = 2026-10-09T16:00:00.000Z
+    expect(startPath).toContain('2026-10-09T16:00:00.000Z');
   });
 
   it('week mode from config; next returns to current week and disables', async () => {

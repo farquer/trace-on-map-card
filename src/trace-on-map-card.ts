@@ -25,9 +25,11 @@ import {
   canGoNext,
   canGoPrev,
   clampRangeOffset,
+  dayOffsetFromYmd,
   parseRangeMode,
   resolveHaTimeZone,
   resolveRangeWindow,
+  todayYmd,
   type RangeMode,
   type TimeWindow,
 } from './range-window.js';
@@ -173,13 +175,34 @@ const CARD_CSS = `
     outline: 2px solid var(--primary-color, #03a9f4);
     outline-offset: 2px;
   }
-  .range-label {
+  .range-label-slot {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .range-label {
     text-align: center;
     font-size: 0.8em;
     font-variant-numeric: tabular-nums;
     color: var(--secondary-text-color, #727272);
-    min-width: 0;
+  }
+  .range-date-fallback {
+    width: 100%;
+    max-width: 11em;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color, #212121);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 0.8em;
+    font-variant-numeric: tabular-nums;
+  }
+  .range-label-slot ha-date-input,
+  .range-label-slot ha-selector {
+    width: 100%;
+    max-width: 12em;
   }
   .timeline-controls {
     display: flex;
@@ -322,6 +345,8 @@ class TraceOnMapCard extends HTMLElement {
   private _rangeMode: RangeMode = DEFAULT_RANGE_MODE;
   private _rangeOffset = 0;
   private _rangeLabelEl: HTMLElement | null = null;
+  private _rangeLabelSlot: HTMLElement | null = null;
+  private _rangeDateEl: HTMLElement | null = null;
   private _rangePrevBtn: HTMLButtonElement | null = null;
   private _rangeNextBtn: HTMLButtonElement | null = null;
   private _rangeNavEl: HTMLElement | null = null;
@@ -443,7 +468,9 @@ class TraceOnMapCard extends HTMLElement {
             </div>
             <div class="range-nav" id="range-nav">
               <button type="button" class="range-nav-btn" id="range-prev" title="Previous">‹</button>
-              <span class="range-label" id="range-label"></span>
+              <div class="range-label-slot" id="range-label-slot">
+                <span class="range-label" id="range-label"></span>
+              </div>
               <button type="button" class="range-nav-btn" id="range-next" title="Next">›</button>
             </div>
           </div>
@@ -473,6 +500,7 @@ class TraceOnMapCard extends HTMLElement {
       'time-label'
     ) as HTMLSpanElement;
     this._rangeLabelEl = this._shadow.getElementById('range-label');
+    this._rangeLabelSlot = this._shadow.getElementById('range-label-slot');
     this._rangePrevBtn = this._shadow.getElementById(
       'range-prev'
     ) as HTMLButtonElement;
@@ -614,15 +642,10 @@ class TraceOnMapCard extends HTMLElement {
 
   private _resolveActiveWindow(nowMs = Date.now()): TimeWindow {
     const hoursToShow = clampHours(this._config?.hours_to_show);
-    const timeZone = resolveHaTimeZone(
-      typeof this._hass?.config?.time_zone === 'string'
-        ? this._hass.config.time_zone
-        : undefined
-    );
     return resolveRangeWindow({
       mode: this._rangeMode,
       nowMs,
-      timeZone,
+      timeZone: this._haTimeZone(),
       offset: this._rangeOffset,
       hoursToShow,
     });
@@ -636,9 +659,96 @@ class TraceOnMapCard extends HTMLElement {
     );
   }
 
+  private _haTimeZone(): string {
+    return resolveHaTimeZone(
+      typeof this._hass?.config?.time_zone === 'string'
+        ? this._hass.config.time_zone
+        : undefined
+    );
+  }
+
+  private _isCustomElementAvailable(tag: string): boolean {
+    return (
+      typeof customElements !== 'undefined' &&
+      typeof customElements.get === 'function' &&
+      !!customElements.get(tag)
+    );
+  }
+
+  private _ensureDayDateControl(): HTMLElement | null {
+    if (!this._rangeLabelSlot) return null;
+    if (this._rangeDateEl && this._rangeDateEl.isConnected) {
+      return this._rangeDateEl;
+    }
+
+    let el: HTMLElement | null = null;
+    if (this._isCustomElementAvailable('ha-date-input')) {
+      const input = document.createElement('ha-date-input') as HTMLElement & {
+        locale?: unknown;
+        value?: string;
+        max?: string;
+      };
+      if (this._hass?.locale) input.locale = this._hass.locale;
+      el = input;
+    } else if (this._isCustomElementAvailable('ha-selector')) {
+      const sel = document.createElement('ha-selector') as HTMLElement & {
+        hass?: HomeAssistant;
+        selector?: { date: Record<string, never> };
+        value?: string;
+      };
+      sel.selector = { date: {} };
+      if (this._hass) sel.hass = this._hass;
+      el = sel;
+    } else {
+      const input = document.createElement('input');
+      input.type = 'date';
+      input.className = 'range-date-fallback';
+      input.setAttribute('aria-label', 'Select day');
+      el = input;
+    }
+
+    el.addEventListener('value-changed', (e: Event) => {
+      const value = (e as CustomEvent<{ value?: string }>).detail?.value;
+      if (typeof value === 'string' && value) this._setDayFromYmd(value);
+    });
+    el.addEventListener('change', () => {
+      const value =
+        'value' in el!
+          ? String((el as HTMLInputElement | { value?: string }).value ?? '')
+          : '';
+      if (value) this._setDayFromYmd(value);
+    });
+
+    this._rangeLabelSlot.appendChild(el);
+    this._rangeDateEl = el;
+    return el;
+  }
+
+  private _syncDayDateControl(ymd: string): void {
+    const el = this._ensureDayDateControl();
+    if (!el) return;
+    const max = todayYmd(Date.now(), this._haTimeZone());
+    if (el instanceof HTMLInputElement) {
+      el.max = max;
+      if (el.value !== ymd) el.value = ymd;
+      return;
+    }
+    const widget = el as HTMLElement & {
+      value?: string;
+      max?: string;
+      locale?: unknown;
+      hass?: HomeAssistant;
+    };
+    if ('max' in widget) widget.max = max;
+    if (this._hass?.locale && 'locale' in widget) {
+      widget.locale = this._hass.locale;
+    }
+    if (this._hass && 'hass' in widget) widget.hass = this._hass;
+    if (widget.value !== ymd) widget.value = ymd;
+  }
+
   private _syncRangeToolbar(window?: TimeWindow): void {
     const w = window ?? this._resolveActiveWindow();
-    if (this._rangeLabelEl) this._rangeLabelEl.textContent = w.label;
     this._shadow.querySelectorAll('.range-mode-btn').forEach((btn) => {
       const mode = (btn as HTMLElement).dataset.mode;
       btn.setAttribute(
@@ -659,6 +769,32 @@ class TraceOnMapCard extends HTMLElement {
         this._rangeOffset
       );
     }
+
+    const dayMode = this._rangeMode === 'day';
+    if (this._rangeLabelEl) {
+      this._rangeLabelEl.style.display = dayMode ? 'none' : '';
+      if (!dayMode) this._rangeLabelEl.textContent = w.label;
+    }
+    if (this._rangeDateEl) {
+      this._rangeDateEl.style.display = dayMode ? '' : 'none';
+    }
+    if (dayMode) {
+      this._syncDayDateControl(w.label);
+    }
+  }
+
+  private _setDayFromYmd(ymd: string): void {
+    if (this._rangeMode !== 'day') return;
+    const offset = dayOffsetFromYmd(Date.now(), this._haTimeZone(), ymd);
+    if (offset == null || offset === this._rangeOffset) {
+      // Keep control in sync if future date was clamped to today
+      this._syncRangeToolbar();
+      return;
+    }
+    this._rangeOffset = offset;
+    this._playback.pause();
+    this._syncRangeToolbar();
+    void this._fetchHistory();
   }
 
   private _setRangeMode(mode: RangeMode): void {

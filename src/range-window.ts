@@ -159,6 +159,57 @@ function formatMd(year: number, month: number, day: number): string {
   return `${pad2(month)}-${pad2(day)}`;
 }
 
+/** Parse `YYYY-MM-DD` (strict digits). */
+export function parseYmd(
+  raw: string
+): { year: number; month: number; day: number } | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  if (!m) return undefined;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  // Validate calendar date via UTC round-trip
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() + 1 !== month ||
+    probe.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return { year, month, day };
+}
+
+/** Civil today as `YYYY-MM-DD` in `timeZone`. */
+export function todayYmd(nowMs: number, timeZone: string): string {
+  const p = getZonedParts(nowMs, timeZone);
+  return formatYmd(p.year, p.month, p.day);
+}
+
+/** Day difference as UTC ordinal (no TZ). */
+function ymdOrdinal(year: number, month: number, day: number): number {
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+/**
+ * Offset for day mode from a picked `YYYY-MM-DD` (HA TZ civil calendar).
+ * Future dates clamp to 0 (today). Invalid input → undefined.
+ */
+export function dayOffsetFromYmd(
+  nowMs: number,
+  timeZone: string,
+  ymd: string
+): number | undefined {
+  const target = parseYmd(ymd);
+  if (!target) return undefined;
+  const today = getZonedParts(nowMs, timeZone);
+  const offset =
+    ymdOrdinal(target.year, target.month, target.day) -
+    ymdOrdinal(today.year, today.month, today.day);
+  return clampRangeOffset(offset);
+}
+
 export function getRecentWindow(
   nowMs: number,
   hours: number

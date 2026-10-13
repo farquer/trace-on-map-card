@@ -4,12 +4,15 @@ import {
   canGoNext,
   canGoPrev,
   clampRangeOffset,
+  dayOffsetFromYmd,
   getDayWindow,
   getRecentWindow,
   getWeekWindow,
   parseRangeMode,
+  parseYmd,
   resolveHaTimeZone,
   resolveRangeWindow,
+  todayYmd,
   zonedWallTimeToUtcMs,
 } from '../range-window';
 
@@ -168,6 +171,35 @@ describe('Shanghai calendar windows', () => {
         hoursToShow: 48,
       }).label
     ).toBe('最近 48 小时');
+  });
+});
+
+describe('YMD helpers / dayOffsetFromYmd', () => {
+  const tz = 'Asia/Shanghai';
+  // 2026-10-13 15:30 CST
+  const nowMs = Date.UTC(2026, 9, 13, 7, 30, 0);
+
+  it('parseYmd accepts valid dates and rejects invalid', () => {
+    expect(parseYmd('2026-10-13')).toEqual({
+      year: 2026,
+      month: 10,
+      day: 13,
+    });
+    expect(parseYmd('2026-02-30')).toBeUndefined();
+    expect(parseYmd('10-13')).toBeUndefined();
+    expect(parseYmd('')).toBeUndefined();
+  });
+
+  it('todayYmd uses HA timezone civil date', () => {
+    expect(todayYmd(nowMs, tz)).toBe('2026-10-13');
+  });
+
+  it('dayOffsetFromYmd: today=0, yesterday=-1, future clamps to 0', () => {
+    expect(dayOffsetFromYmd(nowMs, tz, '2026-10-13')).toBe(0);
+    expect(dayOffsetFromYmd(nowMs, tz, '2026-10-12')).toBe(-1);
+    expect(dayOffsetFromYmd(nowMs, tz, '2026-10-01')).toBe(-12);
+    expect(dayOffsetFromYmd(nowMs, tz, '2026-10-20')).toBe(0);
+    expect(dayOffsetFromYmd(nowMs, tz, 'nope')).toBeUndefined();
   });
 });
 

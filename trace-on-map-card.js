@@ -751,6 +751,47 @@ function formatYmd(year, month, day) {
 function formatMd(year, month, day) {
     return `${pad2(month)}-${pad2(day)}`;
 }
+/** Parse `YYYY-MM-DD` (strict digits). */
+function parseYmd(raw) {
+    if (typeof raw !== 'string')
+        return undefined;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+    if (!m)
+        return undefined;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    // Validate calendar date via UTC round-trip
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    if (probe.getUTCFullYear() !== year ||
+        probe.getUTCMonth() + 1 !== month ||
+        probe.getUTCDate() !== day) {
+        return undefined;
+    }
+    return { year, month, day };
+}
+/** Civil today as `YYYY-MM-DD` in `timeZone`. */
+function todayYmd(nowMs, timeZone) {
+    const p = getZonedParts(nowMs, timeZone);
+    return formatYmd(p.year, p.month, p.day);
+}
+/** Day difference as UTC ordinal (no TZ). */
+function ymdOrdinal(year, month, day) {
+    return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
+}
+/**
+ * Offset for day mode from a picked `YYYY-MM-DD` (HA TZ civil calendar).
+ * Future dates clamp to 0 (today). Invalid input → undefined.
+ */
+function dayOffsetFromYmd(nowMs, timeZone, ymd) {
+    const target = parseYmd(ymd);
+    if (!target)
+        return undefined;
+    const today = getZonedParts(nowMs, timeZone);
+    const offset = ymdOrdinal(target.year, target.month, target.day) -
+        ymdOrdinal(today.year, today.month, today.day);
+    return clampRangeOffset(offset);
+}
 function getRecentWindow(nowMs, hours) {
     const h = Math.max(1, Math.floor(hours));
     const endMs = nowMs;
@@ -1816,13 +1857,34 @@ const CARD_CSS = `
     outline: 2px solid var(--primary-color, #03a9f4);
     outline-offset: 2px;
   }
-  .range-label {
+  .range-label-slot {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .range-label {
     text-align: center;
     font-size: 0.8em;
     font-variant-numeric: tabular-nums;
     color: var(--secondary-text-color, #727272);
-    min-width: 0;
+  }
+  .range-date-fallback {
+    width: 100%;
+    max-width: 11em;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color, #212121);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 0.8em;
+    font-variant-numeric: tabular-nums;
+  }
+  .range-label-slot ha-date-input,
+  .range-label-slot ha-selector {
+    width: 100%;
+    max-width: 12em;
   }
   .timeline-controls {
     display: flex;
@@ -1964,6 +2026,8 @@ class TraceOnMapCard extends HTMLElement {
         this._rangeMode = DEFAULT_RANGE_MODE;
         this._rangeOffset = 0;
         this._rangeLabelEl = null;
+        this._rangeLabelSlot = null;
+        this._rangeDateEl = null;
         this._rangePrevBtn = null;
         this._rangeNextBtn = null;
         this._rangeNavEl = null;
@@ -2070,7 +2134,9 @@ class TraceOnMapCard extends HTMLElement {
             </div>
             <div class="range-nav" id="range-nav">
               <button type="button" class="range-nav-btn" id="range-prev" title="Previous">‹</button>
-              <span class="range-label" id="range-label"></span>
+              <div class="range-label-slot" id="range-label-slot">
+                <span class="range-label" id="range-label"></span>
+              </div>
               <button type="button" class="range-nav-btn" id="range-next" title="Next">›</button>
             </div>
           </div>
@@ -2097,6 +2163,7 @@ class TraceOnMapCard extends HTMLElement {
         this._playBtn = this._shadow.getElementById('play');
         this._timeLabelEl = this._shadow.getElementById('time-label');
         this._rangeLabelEl = this._shadow.getElementById('range-label');
+        this._rangeLabelSlot = this._shadow.getElementById('range-label-slot');
         this._rangePrevBtn = this._shadow.getElementById('range-prev');
         this._rangeNextBtn = this._shadow.getElementById('range-next');
         this._rangeNavEl = this._shadow.getElementById('range-nav');
@@ -2221,13 +2288,10 @@ class TraceOnMapCard extends HTMLElement {
     }
     _resolveActiveWindow(nowMs = Date.now()) {
         const hoursToShow = clampHours(this._config?.hours_to_show);
-        const timeZone = resolveHaTimeZone(typeof this._hass?.config?.time_zone === 'string'
-            ? this._hass.config.time_zone
-            : undefined);
         return resolveRangeWindow({
             mode: this._rangeMode,
             nowMs,
-            timeZone,
+            timeZone: this._haTimeZone(),
             offset: this._rangeOffset,
             hoursToShow,
         });
@@ -2236,10 +2300,83 @@ class TraceOnMapCard extends HTMLElement {
     _windowHours(window) {
         return Math.max(1, Math.round((window.endMs - window.startMs) / 3600000));
     }
+    _haTimeZone() {
+        return resolveHaTimeZone(typeof this._hass?.config?.time_zone === 'string'
+            ? this._hass.config.time_zone
+            : undefined);
+    }
+    _isCustomElementAvailable(tag) {
+        return (typeof customElements !== 'undefined' &&
+            typeof customElements.get === 'function' &&
+            !!customElements.get(tag));
+    }
+    _ensureDayDateControl() {
+        if (!this._rangeLabelSlot)
+            return null;
+        if (this._rangeDateEl && this._rangeDateEl.isConnected) {
+            return this._rangeDateEl;
+        }
+        let el = null;
+        if (this._isCustomElementAvailable('ha-date-input')) {
+            const input = document.createElement('ha-date-input');
+            if (this._hass?.locale)
+                input.locale = this._hass.locale;
+            el = input;
+        }
+        else if (this._isCustomElementAvailable('ha-selector')) {
+            const sel = document.createElement('ha-selector');
+            sel.selector = { date: {} };
+            if (this._hass)
+                sel.hass = this._hass;
+            el = sel;
+        }
+        else {
+            const input = document.createElement('input');
+            input.type = 'date';
+            input.className = 'range-date-fallback';
+            input.setAttribute('aria-label', 'Select day');
+            el = input;
+        }
+        el.addEventListener('value-changed', (e) => {
+            const value = e.detail?.value;
+            if (typeof value === 'string' && value)
+                this._setDayFromYmd(value);
+        });
+        el.addEventListener('change', () => {
+            const value = 'value' in el
+                ? String(el.value ?? '')
+                : '';
+            if (value)
+                this._setDayFromYmd(value);
+        });
+        this._rangeLabelSlot.appendChild(el);
+        this._rangeDateEl = el;
+        return el;
+    }
+    _syncDayDateControl(ymd) {
+        const el = this._ensureDayDateControl();
+        if (!el)
+            return;
+        const max = todayYmd(Date.now(), this._haTimeZone());
+        if (el instanceof HTMLInputElement) {
+            el.max = max;
+            if (el.value !== ymd)
+                el.value = ymd;
+            return;
+        }
+        const widget = el;
+        if ('max' in widget)
+            widget.max = max;
+        if (this._hass?.locale && 'locale' in widget) {
+            widget.locale = this._hass.locale;
+        }
+        if (this._hass && 'hass' in widget)
+            widget.hass = this._hass;
+        if (widget.value !== ymd)
+            widget.value = ymd;
+    }
     _syncRangeToolbar(window) {
         const w = window ?? this._resolveActiveWindow();
-        if (this._rangeLabelEl)
-            this._rangeLabelEl.textContent = w.label;
         this._shadow.querySelectorAll('.range-mode-btn').forEach((btn) => {
             const mode = btn.dataset.mode;
             btn.setAttribute('aria-pressed', mode === this._rangeMode ? 'true' : 'false');
@@ -2254,6 +2391,32 @@ class TraceOnMapCard extends HTMLElement {
         if (this._rangeNextBtn) {
             this._rangeNextBtn.disabled = !canGoNext(this._rangeMode, this._rangeOffset);
         }
+        const dayMode = this._rangeMode === 'day';
+        if (this._rangeLabelEl) {
+            this._rangeLabelEl.style.display = dayMode ? 'none' : '';
+            if (!dayMode)
+                this._rangeLabelEl.textContent = w.label;
+        }
+        if (this._rangeDateEl) {
+            this._rangeDateEl.style.display = dayMode ? '' : 'none';
+        }
+        if (dayMode) {
+            this._syncDayDateControl(w.label);
+        }
+    }
+    _setDayFromYmd(ymd) {
+        if (this._rangeMode !== 'day')
+            return;
+        const offset = dayOffsetFromYmd(Date.now(), this._haTimeZone(), ymd);
+        if (offset == null || offset === this._rangeOffset) {
+            // Keep control in sync if future date was clamped to today
+            this._syncRangeToolbar();
+            return;
+        }
+        this._rangeOffset = offset;
+        this._playback.pause();
+        this._syncRangeToolbar();
+        void this._fetchHistory();
     }
     _setRangeMode(mode) {
         if (mode === this._rangeMode)

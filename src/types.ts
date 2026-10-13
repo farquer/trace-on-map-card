@@ -20,6 +20,8 @@ export interface HomeAssistant {
     time_zone?: string;
     [key: string]: unknown;
   };
+  /** Frontend locale (used by `ha-date-input` when available). */
+  locale?: Record<string, unknown>;
   hassUrl?: (path: string) => string;
   callApi: <T>(
     method: 'GET' | 'POST',
