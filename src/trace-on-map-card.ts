@@ -162,27 +162,29 @@ const CARD_CSS = `
   }
   .range-nav {
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) 36px;
-    align-items: stretch;
-    gap: 6px;
-    max-width: 260px;
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 8px;
+    max-width: 320px;
     width: 100%;
     margin: 0 auto;
+    min-height: 42px;
   }
   .range-nav-btn {
-    width: 36px;
-    height: 36px;
+    width: 42px;
+    height: 42px;
     border: 1px solid var(--divider-color, #e0e0e0);
     background: var(--secondary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
     border-radius: 8px;
     cursor: pointer;
-    font-size: 1.1em;
+    font-size: 1.15em;
     line-height: 1;
     padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
     transition: background 0.15s ease, border-color 0.15s ease;
   }
   .range-nav-btn:hover:not(:disabled) {
@@ -199,35 +201,40 @@ const CARD_CSS = `
   }
   .range-label-slot {
     min-width: 0;
+    height: 42px;
     display: flex;
-    align-items: stretch;
+    align-items: center;
     justify-content: center;
+    box-sizing: border-box;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 8px;
+    background: var(--secondary-background-color, #f5f5f5);
+    overflow: hidden;
   }
   .range-label {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 36px;
+    height: 42px;
     padding: 0 10px;
     text-align: center;
     font-size: 0.8125em;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     color: var(--primary-text-color, #212121);
-    background: var(--secondary-background-color, #f5f5f5);
-    border: 1px solid var(--divider-color, #e0e0e0);
-    border-radius: 8px;
+    background: transparent;
+    border: none;
     box-sizing: border-box;
   }
   .range-date-fallback {
     width: 100%;
-    height: 36px;
+    height: 42px;
     box-sizing: border-box;
-    border: 1px solid var(--divider-color, #e0e0e0);
-    background: var(--secondary-background-color, #f5f5f5);
+    border: none;
+    background: transparent;
     color: var(--primary-text-color, #212121);
-    border-radius: 8px;
+    border-radius: 0;
     padding: 0 8px;
     font-size: 0.8125em;
     font-weight: 500;
@@ -235,19 +242,22 @@ const CARD_CSS = `
     text-align: center;
     cursor: pointer;
   }
-  .range-date-fallback:hover {
+  .range-label-slot:hover {
     border-color: var(--primary-color, #03a9f4);
   }
   .range-label-slot ha-date-input,
   .range-label-slot ha-selector {
     width: 100%;
-    height: 36px;
-    --mdc-text-field-fill-color: var(--secondary-background-color, #f5f5f5);
+    height: 42px;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    --mdc-text-field-fill-color: transparent;
     --mdc-text-field-idle-line-color: transparent;
-    --mdc-text-field-hover-line-color: var(--primary-color, #03a9f4);
+    --mdc-text-field-hover-line-color: transparent;
     --mdc-theme-primary: var(--primary-color, #03a9f4);
-    border: 1px solid var(--divider-color, #e0e0e0);
-    border-radius: 8px;
+    border: none;
+    border-radius: 0;
     overflow: hidden;
     box-sizing: border-box;
   }

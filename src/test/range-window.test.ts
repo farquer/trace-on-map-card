@@ -100,7 +100,7 @@ describe('Shanghai calendar windows', () => {
     // 2026-10-13 is Tuesday → week Mon 10-12 .. Sun 10-18
     const nowMs = Date.UTC(2026, 9, 13, 7, 30, 0);
     const w = getWeekWindow(nowMs, tz, 0);
-    expect(w.label).toBe('10-12 ~ 10-18');
+    expect(w.label).toBe('2026-10-12 ~ 2026-10-18');
     expect(w.startMs).toBe(zonedWallTimeToUtcMs(2026, 10, 12, 0, 0, 0, tz));
     expect(w.endMs).toBe(zonedWallTimeToUtcMs(2026, 10, 19, 0, 0, 0, tz));
   });
@@ -108,7 +108,7 @@ describe('Shanghai calendar windows', () => {
   it('week offset -1 is previous Mon–Sun', () => {
     const nowMs = Date.UTC(2026, 9, 13, 7, 30, 0);
     const w = getWeekWindow(nowMs, tz, -1);
-    expect(w.label).toBe('10-05 ~ 10-11');
+    expect(w.label).toBe('2026-10-05 ~ 2026-10-11');
     expect(w.startMs).toBe(zonedWallTimeToUtcMs(2026, 10, 5, 0, 0, 0, tz));
     expect(w.endMs).toBe(zonedWallTimeToUtcMs(2026, 10, 12, 0, 0, 0, tz));
   });
@@ -131,14 +131,14 @@ describe('Shanghai calendar windows', () => {
     // 2026-10-12 is Monday in Shanghai
     const nowMs = zonedWallTimeToUtcMs(2026, 10, 12, 9, 0, 0, tz);
     const w = getWeekWindow(nowMs, tz, 0);
-    expect(w.label).toBe('10-12 ~ 10-18');
+    expect(w.label).toBe('2026-10-12 ~ 2026-10-18');
   });
 
   it('week containing Sunday includes prior Monday', () => {
-    // 2026-10-18 is Sunday → still 10-12 ~ 10-18
+    // 2026-10-18 is Sunday → still 2026-10-12 ~ 2026-10-18
     const nowMs = zonedWallTimeToUtcMs(2026, 10, 18, 18, 0, 0, tz);
     const w = getWeekWindow(nowMs, tz, 0);
-    expect(w.label).toBe('10-12 ~ 10-18');
+    expect(w.label).toBe('2026-10-12 ~ 2026-10-18');
     expect(w.startMs).toBe(zonedWallTimeToUtcMs(2026, 10, 12, 0, 0, 0, tz));
   });
 
@@ -161,7 +161,7 @@ describe('Shanghai calendar windows', () => {
         offset: 0,
         hoursToShow: 24,
       }).label
-    ).toBe('10-12 ~ 10-18');
+    ).toBe('2026-10-12 ~ 2026-10-18');
     expect(
       resolveRangeWindow({
         mode: 'recent',

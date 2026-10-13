@@ -154,11 +154,6 @@ function formatYmd(year: number, month: number, day: number): string {
   return `${year}-${pad2(month)}-${pad2(day)}`;
 }
 
-function formatMd(year: number, month: number, day: number): string {
-  void year;
-  return `${pad2(month)}-${pad2(day)}`;
-}
-
 /** Parse `YYYY-MM-DD` (strict digits). */
 export function parseYmd(
   raw: string
@@ -307,7 +302,7 @@ export function getWeekWindow(
   return {
     startMs,
     endMs,
-    label: `${formatMd(monday.year, monday.month, monday.day)} ~ ${formatMd(sunday.year, sunday.month, sunday.day)}`,
+    label: `${formatYmd(monday.year, monday.month, monday.day)} ~ ${formatYmd(sunday.year, sunday.month, sunday.day)}`,
   };
 }
 

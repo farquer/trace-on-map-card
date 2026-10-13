@@ -923,7 +923,9 @@ describe('TraceOnMapCard element', () => {
     const label = card.shadowRoot!.getElementById('range-label')!;
 
     expect(weekBtn.getAttribute('aria-pressed')).toBe('true');
-    expect(label.textContent).toMatch(/^\d{2}-\d{2} ~ \d{2}-\d{2}$/);
+    expect(label.textContent).toMatch(
+      /^\d{4}-\d{2}-\d{2} ~ \d{4}-\d{2}-\d{2}$/
+    );
     expect(next.disabled).toBe(true);
 
     prev.click();
