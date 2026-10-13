@@ -1056,4 +1056,79 @@ describe('TraceOnMapCard element', () => {
 
     vi.useRealTimers();
   });
+
+  it('week mode scrubs by calendar time, not day-1 point density', async () => {
+    mockHaMap();
+    const tz = 'Asia/Shanghai';
+    // Fixed "now" during week of 2026-10-05 (Mon) .. 2026-10-11 (Sun)
+    const nowMs = Date.UTC(2026, 9, 8, 8, 0, 0); // Wed mid-week
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+
+    const mon = Date.UTC(2026, 9, 5, 2, 0, 0); // Mon 10:00 CST
+    const monLate = Date.UTC(2026, 9, 5, 15, 59, 0); // Mon 23:59 CST
+    const wed = Date.UTC(2026, 9, 7, 6, 30, 0); // Wed 14:30 CST
+    // Many Mon points + one Wed — index slider would stay on Mon until the end
+    const history = [
+      ...Array.from({ length: 20 }, (_, i) => ({
+        entity_id: 'person.a',
+        state: 'not_home',
+        last_changed: new Date(mon + i * 60_000).toISOString(),
+        attributes: { latitude: i, longitude: i },
+      })),
+      {
+        entity_id: 'person.a',
+        state: 'not_home',
+        last_changed: new Date(monLate).toISOString(),
+        attributes: { latitude: 50, longitude: 50 },
+      },
+      {
+        entity_id: 'person.a',
+        state: 'not_home',
+        last_changed: new Date(wed).toISOString(),
+        attributes: { latitude: 99, longitude: 99 },
+      },
+    ];
+    const callApi = vi.fn(async () => [history]);
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3', time_zone: tz },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 99, longitude: 99 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      range_mode: 'week',
+    });
+
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
+    // Time-mapped slider (not point-index)
+    expect(slider.max).toBe('1000');
+
+    // Scrub near Wednesday mid-week (~2.5 days into Mon–Sun)
+    slider.value = '400';
+    slider.dispatchEvent(new Event('change'));
+
+    await waitFor(() => {
+      const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
+        paths: Array<{ points: Array<{ point: [number, number] }> }>;
+      };
+      const pts = map.paths?.[0]?.points ?? [];
+      expect(pts.some((p) => p.point[0] === 99)).toBe(true);
+      const label = card.shadowRoot!.getElementById('time-label')!;
+      // Full datetime so cross-day scrub is unambiguous
+      expect(label.textContent).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      expect(label.textContent).not.toMatch(/^10:04$|^23:59$/);
+    });
+  });
 });

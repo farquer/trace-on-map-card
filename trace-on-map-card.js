@@ -24,6 +24,16 @@ function formatDateTime(date) {
         ' ' +
         formatTime(date));
 }
+/** Local `YYYY-MM-DD HH:mm:ss` for multi-day scrub labels. */
+function formatDateTimeSeconds(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    const ss = String(date.getSeconds()).padStart(2, '0');
+    return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+}
 function clampHours(raw) {
     if (raw === undefined || raw === null || raw === '') {
         return DEFAULT_HOURS_TO_SHOW;
@@ -1316,6 +1326,10 @@ function buildHaPaths(points, entityConfigs, hoursToShow, colorMap) {
     }
     return paths;
 }
+/** Keep points with timestamp <= t (inclusive). */
+function clipPointsToTime(points, t) {
+    return points.filter((p) => p.timestamp <= t);
+}
 /** Keep timeline points with index <= upToIndex. */
 function clipTimelineToIndex(points, upToIndex) {
     if (points.length === 0 || upToIndex < 0)
@@ -2076,12 +2090,13 @@ const CARD_CSS = `
     font-variant-numeric: tabular-nums;
   }
   .timeline-time {
-    font-size: 0.8125em;
+    font-size: 0.75em;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     color: var(--primary-text-color, #212121);
     white-space: nowrap;
     min-width: 3.25em;
+    max-width: 11.5em;
     text-align: right;
     flex-shrink: 0;
   }
@@ -2713,7 +2728,10 @@ class TraceOnMapCard extends HTMLElement {
         if (token !== this._fetchToken)
             return;
         this._clearAlert();
-        this._timeSliderMode = false;
+        // Day/week must scrub by calendar time (not point index), otherwise dense
+        // day-1 updates steal the whole slider while labels still show the week.
+        const useTimeSlider = this._rangeMode === 'day' || this._rangeMode === 'week';
+        this._timeSliderMode = useTimeSlider;
         this._historyWindows = [];
         this._loadedWindowIds.clear();
         this._timelineStartMs = startMs;
@@ -2724,7 +2742,7 @@ class TraceOnMapCard extends HTMLElement {
             points = filterPointsInWindow(points, startMs, endMs, false);
         }
         this._timelinePoints = points;
-        this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, false);
+        this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, useTimeSlider);
     }
     async _fetchHistoryBudget(token, startMs, endMs, hoursToShow, configs, entityIdList, budget) {
         this._clearAlert();
@@ -2846,8 +2864,11 @@ class TraceOnMapCard extends HTMLElement {
     _onPlayback(index, playing) {
         this._playbackIndex = index;
         const pt = this._timelinePoints[index];
-        if (pt)
+        // In time-slider scrub, playhead was set by _scrubToTime — do not snap
+        // back to the last point's timestamp (would look stuck on day 1).
+        if (pt && (!this._timeSliderMode || playing)) {
             this._playheadTimeMs = pt.timestamp;
+        }
         if (this._sliderEl) {
             if (this._timeSliderMode) {
                 this._sliderEl.value = String(timestampToSliderValue(this._playheadTimeMs || this._timelineEndMs, 0, TIME_SLIDER_MAX, this._timelineStartMs, this._timelineEndMs));
@@ -2856,13 +2877,20 @@ class TraceOnMapCard extends HTMLElement {
                 this._sliderEl.value = String(index);
             }
         }
-        this._updateTimeLabel(index);
+        if (this._timeSliderMode) {
+            this._updateTimeLabelFromMs(this._playheadTimeMs || pt?.timestamp || this._timelineEndMs);
+        }
+        else {
+            this._updateTimeLabel(index);
+        }
         this._updatePlayBtn(playing);
         if (this._timeSliderMode && playing) {
             void this._ensureWindowsAroundTime(this._playheadTimeMs);
         }
         const hoursToShow = clampHours(this._config?.hours_to_show);
-        const clipped = clipTimelineToIndex(this._timelinePoints, index);
+        const clipped = this._timeSliderMode
+            ? clipPointsToTime(this._timelinePoints, this._playheadTimeMs)
+            : clipTimelineToIndex(this._timelinePoints, index);
         const clippedPaths = buildHaPaths(clipped, normalizeEntityConfigs(this._config?.entities ?? []), hoursToShow, this._entityColors);
         const view = resolveMapViewState({
             playing,
@@ -2875,10 +2903,18 @@ class TraceOnMapCard extends HTMLElement {
         this._displayPaths = view.paths;
         this._applyMap(view.paths, view.showLiveEntities, view.isLive);
     }
+    _useFullScrubTimeLabel() {
+        return this._rangeMode === 'day' || this._rangeMode === 'week';
+    }
+    _formatScrubTime(date) {
+        return this._useFullScrubTimeLabel()
+            ? formatDateTimeSeconds(date)
+            : formatTime(date);
+    }
     _updateTimeLabelFromMs(t) {
         if (!this._timeLabelEl)
             return;
-        this._timeLabelEl.textContent = formatTime(new Date(t));
+        this._timeLabelEl.textContent = this._formatScrubTime(new Date(t));
     }
     _refreshMapFromHass() {
         const refresh = resolveHassMapRefresh({
@@ -2947,7 +2983,7 @@ class TraceOnMapCard extends HTMLElement {
             return;
         const pt = this._timelinePoints[index];
         this._timeLabelEl.textContent = pt
-            ? formatTime(new Date(pt.timestamp))
+            ? this._formatScrubTime(new Date(pt.timestamp))
             : '';
     }
     _updatePlayBtn(playing) {

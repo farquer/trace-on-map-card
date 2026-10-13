@@ -47,8 +47,14 @@ describe('clampZoom', () => {
 
 describe('resolveThemeMode / formatters / colorForEntity', () => {
   it('resolves theme', async () => {
-    const { resolveThemeMode, colorForEntity, formatTime, formatDateTime, isZoneEntity } =
-      await import('../utils');
+    const {
+      resolveThemeMode,
+      colorForEntity,
+      formatTime,
+      formatDateTime,
+      formatDateTimeSeconds,
+      isZoneEntity,
+    } = await import('../utils');
     expect(resolveThemeMode({ type: 'x', entities: [], theme_mode: 'light' })).toBe(
       'light'
     );
@@ -62,6 +68,9 @@ describe('resolveThemeMode / formatters / colorForEntity', () => {
     expect(typeof formatTime(new Date('2026-01-01T12:00:00Z'))).toBe('string');
     expect(typeof formatDateTime(new Date('2026-01-01T12:00:00Z'))).toBe(
       'string'
+    );
+    expect(formatDateTimeSeconds(new Date(2026, 9, 11, 23, 59, 8))).toBe(
+      '2026-10-11 23:59:08'
     );
   });
 });

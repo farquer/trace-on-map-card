@@ -8,6 +8,7 @@ import { escapeHtml } from './dom-utils.js';
 import { ensureHaMapLoaded } from './ha-map-loader.js';
 import {
   buildHaPaths,
+  clipPointsToTime,
   clipTimelineToIndex,
   extractTimelinePoints,
 } from './history.js';
@@ -62,6 +63,7 @@ import {
   clampHours,
   clampZoom,
   formatDateTime,
+  formatDateTimeSeconds,
   formatTime,
   isHaVersionSupported,
   normalizeEntityConfigs,
@@ -316,12 +318,13 @@ const CARD_CSS = `
     font-variant-numeric: tabular-nums;
   }
   .timeline-time {
-    font-size: 0.8125em;
+    font-size: 0.75em;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
     color: var(--primary-text-color, #212121);
     white-space: nowrap;
     min-width: 3.25em;
+    max-width: 11.5em;
     text-align: right;
     flex-shrink: 0;
   }
@@ -1052,7 +1055,11 @@ class TraceOnMapCard extends HTMLElement {
     if (token !== this._fetchToken) return;
 
     this._clearAlert();
-    this._timeSliderMode = false;
+    // Day/week must scrub by calendar time (not point index), otherwise dense
+    // day-1 updates steal the whole slider while labels still show the week.
+    const useTimeSlider =
+      this._rangeMode === 'day' || this._rangeMode === 'week';
+    this._timeSliderMode = useTimeSlider;
     this._historyWindows = [];
     this._loadedWindowIds.clear();
     this._timelineStartMs = startMs;
@@ -1063,7 +1070,7 @@ class TraceOnMapCard extends HTMLElement {
       points = filterPointsInWindow(points, startMs, endMs, false);
     }
     this._timelinePoints = points;
-    this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, false);
+    this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, useTimeSlider);
   }
 
   private async _fetchHistoryBudget(
@@ -1250,7 +1257,11 @@ class TraceOnMapCard extends HTMLElement {
   private _onPlayback(index: number, playing: boolean): void {
     this._playbackIndex = index;
     const pt = this._timelinePoints[index];
-    if (pt) this._playheadTimeMs = pt.timestamp;
+    // In time-slider scrub, playhead was set by _scrubToTime — do not snap
+    // back to the last point's timestamp (would look stuck on day 1).
+    if (pt && (!this._timeSliderMode || playing)) {
+      this._playheadTimeMs = pt.timestamp;
+    }
 
     if (this._sliderEl) {
       if (this._timeSliderMode) {
@@ -1267,7 +1278,13 @@ class TraceOnMapCard extends HTMLElement {
         this._sliderEl.value = String(index);
       }
     }
-    this._updateTimeLabel(index);
+    if (this._timeSliderMode) {
+      this._updateTimeLabelFromMs(
+        this._playheadTimeMs || pt?.timestamp || this._timelineEndMs
+      );
+    } else {
+      this._updateTimeLabel(index);
+    }
     this._updatePlayBtn(playing);
 
     if (this._timeSliderMode && playing) {
@@ -1275,7 +1292,9 @@ class TraceOnMapCard extends HTMLElement {
     }
 
     const hoursToShow = clampHours(this._config?.hours_to_show);
-    const clipped = clipTimelineToIndex(this._timelinePoints, index);
+    const clipped = this._timeSliderMode
+      ? clipPointsToTime(this._timelinePoints, this._playheadTimeMs)
+      : clipTimelineToIndex(this._timelinePoints, index);
     const clippedPaths = buildHaPaths(
       clipped,
       normalizeEntityConfigs(this._config?.entities ?? []),
@@ -1296,9 +1315,19 @@ class TraceOnMapCard extends HTMLElement {
     this._applyMap(view.paths, view.showLiveEntities, view.isLive);
   }
 
+  private _useFullScrubTimeLabel(): boolean {
+    return this._rangeMode === 'day' || this._rangeMode === 'week';
+  }
+
+  private _formatScrubTime(date: Date): string {
+    return this._useFullScrubTimeLabel()
+      ? formatDateTimeSeconds(date)
+      : formatTime(date);
+  }
+
   private _updateTimeLabelFromMs(t: number): void {
     if (!this._timeLabelEl) return;
-    this._timeLabelEl.textContent = formatTime(new Date(t));
+    this._timeLabelEl.textContent = this._formatScrubTime(new Date(t));
   }
 
   private _refreshMapFromHass(): void {
@@ -1381,7 +1410,7 @@ class TraceOnMapCard extends HTMLElement {
     if (!this._timeLabelEl) return;
     const pt = this._timelinePoints[index];
     this._timeLabelEl.textContent = pt
-      ? formatTime(new Date(pt.timestamp))
+      ? this._formatScrubTime(new Date(pt.timestamp))
       : '';
   }
 
