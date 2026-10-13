@@ -1,5 +1,10 @@
-/** Minimum Home Assistant Core version (inclusive). */
-const MIN_HA_VERSION = '2026.9.0';
+/** Minimum Home Assistant Core version (inclusive). Paths + playback work. */
+const MIN_HA_VERSION = '2024.1.0';
+/**
+ * Scrub avatars need ha-map `editableLocations` (Core 2026.9+).
+ * Below this, the card still runs but without timeline person markers.
+ */
+const SCRUB_AVATAR_MIN_HA_VERSION = '2026.9.0';
 const DEFAULT_HOURS_TO_SHOW = 24;
 const MAX_HOURS_TO_SHOW = 720;
 const MIN_HOURS_TO_SHOW = 1;
@@ -127,11 +132,15 @@ function compareHaVersions(a, b) {
     }
     return 0;
 }
-/** True when version is >= MIN_HA_VERSION (2026.9.0). */
+/** True when version is >= MIN_HA_VERSION (2024.1.0). */
 function isHaVersionSupported(version, minimum = MIN_HA_VERSION) {
     if (!parseHaVersion(version ?? undefined))
         return false;
     return compareHaVersions(String(version), minimum) >= 0;
+}
+/** True when scrub avatars (editableLocations) are available (2026.9+). */
+function isScrubAvatarsSupported(version) {
+    return isHaVersionSupported(version, SCRUB_AVATAR_MIN_HA_VERSION);
 }
 
 /** Only person (用户) and zone (区域) are offered in the picker. */
@@ -1896,6 +1905,14 @@ const CARD_CSS = `
     font-size: 0.9em;
     background: color-mix(in srgb, var(--error-color, #c62828) 8%, transparent);
   }
+  .feature-hint {
+    padding: 8px 16px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 0.8125em;
+    line-height: 1.35;
+    background: var(--secondary-background-color, #f5f5f5);
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
+  }
   .timeline-container {
     padding: 12px 16px 12px;
     background: var(--card-background-color, #fff);
@@ -2158,6 +2175,7 @@ class TraceOnMapCard extends HTMLElement {
         this._timeLabelEl = null;
         this._loadingEl = null;
         this._alertEl = null;
+        this._featureHintEl = null;
         this._legendEl = null;
         this._timelinePoints = [];
         this._fullPaths = [];
@@ -2286,6 +2304,7 @@ class TraceOnMapCard extends HTMLElement {
       <ha-card>
         <div class="card-header" id="title"></div>
         <div id="map-wrap"><div class="alert" id="alert" style="display:none"></div></div>
+        <div class="feature-hint" id="feature-hint" style="display:none"></div>
         <div class="loading-msg" id="loading" style="display:none"></div>
         <div class="timeline-container">
           <div class="range-toolbar" id="range-toolbar">
@@ -2320,6 +2339,7 @@ class TraceOnMapCard extends HTMLElement {
         this._mapWrap = this._shadow.getElementById('map-wrap');
         this._loadingEl = this._shadow.getElementById('loading');
         this._alertEl = this._shadow.getElementById('alert');
+        this._featureHintEl = this._shadow.getElementById('feature-hint');
         this._legendEl = this._shadow.getElementById('legend');
         this._sliderEl = this._shadow.getElementById('slider');
         this._playBtn = this._shadow.getElementById('play');
@@ -2378,6 +2398,7 @@ class TraceOnMapCard extends HTMLElement {
             return;
         }
         this._clearAlert();
+        this._updateFeatureHint(haVersion);
         this._mapEl = createHaMapElement();
         this._mapEl.classList.add('map-el');
         this._mapWrap.appendChild(this._mapEl);
@@ -2444,6 +2465,20 @@ class TraceOnMapCard extends HTMLElement {
             return;
         this._alertEl.style.display = 'none';
         this._alertEl.textContent = '';
+    }
+    _updateFeatureHint(haVersion) {
+        if (!this._featureHintEl)
+            return;
+        if (isScrubAvatarsSupported(haVersion)) {
+            this._featureHintEl.style.display = 'none';
+            this._featureHintEl.textContent = '';
+            return;
+        }
+        this._featureHintEl.style.display = '';
+        this._featureHintEl.textContent =
+            `Timeline person markers need Home Assistant Core ${SCRUB_AVATAR_MIN_HA_VERSION}+` +
+                (haVersion ? ` (current: ${haVersion})` : '') +
+                '. Paths and playback still work.';
     }
     _budgetMaxPoints() {
         return this._config?.max_timeline_points;
@@ -2939,7 +2974,8 @@ class TraceOnMapCard extends HTMLElement {
             return;
         const configs = normalizeEntityConfigs(this._config.entities);
         const cluster = this._config.cluster !== false;
-        const editableLocations = isLive
+        const scrubOk = isScrubAvatarsSupported(this._hass?.config?.version);
+        const editableLocations = isLive || !scrubOk
             ? []
             : buildScrubEditableLocations({
                 positions: positionsAtTimelineIndex(this._timelinePoints, this._playbackIndex),

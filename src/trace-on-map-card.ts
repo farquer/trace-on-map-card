@@ -58,7 +58,7 @@ import type {
   TimelinePoint,
   TraceOnMapCardConfig,
 } from './types.js';
-import { MIN_HA_VERSION } from './types.js';
+import { MIN_HA_VERSION, SCRUB_AVATAR_MIN_HA_VERSION } from './types.js';
 import {
   clampHours,
   clampZoom,
@@ -66,6 +66,7 @@ import {
   formatDateTimeSeconds,
   formatTime,
   isHaVersionSupported,
+  isScrubAvatarsSupported,
   normalizeEntityConfigs,
   parseAspectRatio,
   resolveThemeMode,
@@ -115,6 +116,14 @@ const CARD_CSS = `
     color: var(--error-color, #c62828);
     font-size: 0.9em;
     background: color-mix(in srgb, var(--error-color, #c62828) 8%, transparent);
+  }
+  .feature-hint {
+    padding: 8px 16px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 0.8125em;
+    line-height: 1.35;
+    background: var(--secondary-background-color, #f5f5f5);
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
   }
   .timeline-container {
     padding: 12px 16px 12px;
@@ -378,6 +387,7 @@ class TraceOnMapCard extends HTMLElement {
   private _timeLabelEl: HTMLSpanElement | null = null;
   private _loadingEl: HTMLElement | null = null;
   private _alertEl: HTMLElement | null = null;
+  private _featureHintEl: HTMLElement | null = null;
   private _legendEl: HTMLElement | null = null;
 
   private _timelinePoints: TimelinePoint[] = [];
@@ -522,6 +532,7 @@ class TraceOnMapCard extends HTMLElement {
       <ha-card>
         <div class="card-header" id="title"></div>
         <div id="map-wrap"><div class="alert" id="alert" style="display:none"></div></div>
+        <div class="feature-hint" id="feature-hint" style="display:none"></div>
         <div class="loading-msg" id="loading" style="display:none"></div>
         <div class="timeline-container">
           <div class="range-toolbar" id="range-toolbar">
@@ -557,6 +568,7 @@ class TraceOnMapCard extends HTMLElement {
     this._mapWrap = this._shadow.getElementById('map-wrap') as HTMLDivElement;
     this._loadingEl = this._shadow.getElementById('loading');
     this._alertEl = this._shadow.getElementById('alert');
+    this._featureHintEl = this._shadow.getElementById('feature-hint');
     this._legendEl = this._shadow.getElementById('legend');
     this._sliderEl = this._shadow.getElementById('slider') as HTMLInputElement;
     this._playBtn = this._shadow.getElementById('play') as HTMLButtonElement;
@@ -632,6 +644,7 @@ class TraceOnMapCard extends HTMLElement {
     }
 
     this._clearAlert();
+    this._updateFeatureHint(haVersion);
     this._mapEl = createHaMapElement();
     this._mapEl.classList.add('map-el');
     this._mapWrap.appendChild(this._mapEl);
@@ -698,6 +711,20 @@ class TraceOnMapCard extends HTMLElement {
     if (!this._alertEl) return;
     this._alertEl.style.display = 'none';
     this._alertEl.textContent = '';
+  }
+
+  private _updateFeatureHint(haVersion: string | undefined): void {
+    if (!this._featureHintEl) return;
+    if (isScrubAvatarsSupported(haVersion)) {
+      this._featureHintEl.style.display = 'none';
+      this._featureHintEl.textContent = '';
+      return;
+    }
+    this._featureHintEl.style.display = '';
+    this._featureHintEl.textContent =
+      `Timeline person markers need Home Assistant Core ${SCRUB_AVATAR_MIN_HA_VERSION}+` +
+      (haVersion ? ` (current: ${haVersion})` : '') +
+      '. Paths and playback still work.';
   }
 
   private _budgetMaxPoints(): number | undefined {
@@ -1357,30 +1384,32 @@ class TraceOnMapCard extends HTMLElement {
     if (!this._mapEl || !this._config) return;
     const configs = normalizeEntityConfigs(this._config.entities);
     const cluster = this._config.cluster !== false;
-    const editableLocations = isLive
-      ? []
-      : buildScrubEditableLocations({
-          positions: positionsAtTimelineIndex(
-            this._timelinePoints,
-            this._playbackIndex
-          ),
-          names: new Map(
-            configs
-              .filter((c) => c.entity)
-              .map((c) => [
-                c.entity,
-                c.name ??
-                  this._hass?.states[c.entity]?.attributes?.friendly_name ??
+    const scrubOk = isScrubAvatarsSupported(this._hass?.config?.version);
+    const editableLocations =
+      isLive || !scrubOk
+        ? []
+        : buildScrubEditableLocations({
+            positions: positionsAtTimelineIndex(
+              this._timelinePoints,
+              this._playbackIndex
+            ),
+            names: new Map(
+              configs
+                .filter((c) => c.entity)
+                .map((c) => [
                   c.entity,
-              ])
-          ),
-          colors: this._entityColors,
-          states: this._hass?.states,
-          hassUrl: this._hass?.hassUrl?.bind(this._hass),
-          elementCache: this._scrubMarkerEls,
-          // Match live ha-map marker chrome (cluster bubble vs floating pin).
-          cluster,
-        });
+                  c.name ??
+                    this._hass?.states[c.entity]?.attributes?.friendly_name ??
+                    c.entity,
+                ])
+            ),
+            colors: this._entityColors,
+            states: this._hass?.states,
+            hassUrl: this._hass?.hassUrl?.bind(this._hass),
+            elementCache: this._scrubMarkerEls,
+            // Match live ha-map marker chrome (cluster bubble vs floating pin).
+            cluster,
+          });
 
     applyMapProps(this._mapEl, {
       hass: this._hass,

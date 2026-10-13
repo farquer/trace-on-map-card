@@ -4,6 +4,7 @@ import {
   clampZoom,
   compareHaVersions,
   isHaVersionSupported,
+  isScrubAvatarsSupported,
   normalizeEntityConfigs,
   parseAspectRatio,
   parseHaVersion,
@@ -99,10 +100,11 @@ describe('parseAspectRatio', () => {
   });
 });
 
-describe('HA version gate (>= 2026.9.0)', () => {
+describe('HA version gate (>= 2024.1.0)', () => {
   it('parses core versions', () => {
     expect(parseHaVersion('2026.9.0')).toEqual([2026, 9, 0]);
     expect(parseHaVersion('2026.9.3b0')).toEqual([2026, 9, 3]);
+    expect(parseHaVersion('2024.1.0')).toEqual([2024, 1, 0]);
   });
 
   it('compares versions', () => {
@@ -114,12 +116,28 @@ describe('HA version gate (>= 2026.9.0)', () => {
     expect(compareHaVersions('bad', 'also-bad')).toBe(0);
   });
 
-  it('accepts 2026.9.x and above only', () => {
+  it('accepts 2024.1.x and above', () => {
+    expect(isHaVersionSupported('2024.1.0')).toBe(true);
+    expect(isHaVersionSupported('2024.1.0b0')).toBe(true);
+    expect(isHaVersionSupported('2025.12.0')).toBe(true);
+    expect(isHaVersionSupported('2026.8.4')).toBe(true);
     expect(isHaVersionSupported('2026.9.0')).toBe(true);
-    expect(isHaVersionSupported('2026.9.4')).toBe(true);
     expect(isHaVersionSupported('2026.10.0')).toBe(true);
-    expect(isHaVersionSupported('2026.8.4')).toBe(false);
-    expect(isHaVersionSupported('2025.12.0')).toBe(false);
+    expect(isHaVersionSupported('2023.12.4')).toBe(false);
+    expect(isHaVersionSupported('2024.0.9')).toBe(false);
     expect(isHaVersionSupported(undefined)).toBe(false);
+    expect(isHaVersionSupported(null)).toBe(false);
+    expect(isHaVersionSupported('not-a-version')).toBe(false);
+  });
+
+  it('gates scrub avatars at 2026.9+', () => {
+    expect(isScrubAvatarsSupported('2026.9.0')).toBe(true);
+    expect(isScrubAvatarsSupported('2026.9.0b0')).toBe(true);
+    expect(isScrubAvatarsSupported('2026.10.1')).toBe(true);
+    expect(isScrubAvatarsSupported('2026.8.4')).toBe(false);
+    expect(isScrubAvatarsSupported('2026.8.9')).toBe(false);
+    expect(isScrubAvatarsSupported('2024.1.0')).toBe(false);
+    expect(isScrubAvatarsSupported(undefined)).toBe(false);
+    expect(isScrubAvatarsSupported('')).toBe(false);
   });
 });

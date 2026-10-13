@@ -10,15 +10,15 @@ Home Assistant Lovelace card：在 **HA 默认地图**上展示实体位置历�
 
 ## 要求
 
-- **Home Assistant Core ≥ 2026.9.0**（2026.9.x 及以上）
-- 低于该版本时卡片会提示升级，不会加载地图
+- **Home Assistant Core ≥ 2024.1.0**（硬门槛；更低会提示升级且不加载地图）
+- **完整功能（含 scrub 轨迹头像）需 ≥ 2026.9.0**；`2024.1`–`2026.8` 仍可用：地图、历史路径、时间轴播放/拖动；拖动时无跟人走的头像，并显示一行提示
 - 卡片通过 HA 前端的 `ha-map` 渲染；若尚未注册，会尝试 `loadCardHelpers` 探测加载原生 Map card 依赖
 
 ## 功能
 
 - 多实体当前位置（与原生 Map card 一致的地图底座）
 - 历史轨迹路径（History API）
-- 时间轴：播放 / 暂停 / 拖动
+- 时间轴：播放 / 暂停 / 拖动（≥2026.9 另有 scrub 头像）
 - `zones`、`auto_fit`、`fit_zones`、`aspect_ratio`、`theme_mode`、`cluster`
 - UI 配置器
 - 范围模式：最近 / 天 / 周（默认天·当日；按 HA `time_zone`）

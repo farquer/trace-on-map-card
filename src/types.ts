@@ -30,8 +30,14 @@ export interface HomeAssistant {
   ) => Promise<T>;
 }
 
-/** Minimum Home Assistant Core version (inclusive). */
-export const MIN_HA_VERSION = '2026.9.0';
+/** Minimum Home Assistant Core version (inclusive). Paths + playback work. */
+export const MIN_HA_VERSION = '2024.1.0';
+
+/**
+ * Scrub avatars need ha-map `editableLocations` (Core 2026.9+).
+ * Below this, the card still runs but without timeline person markers.
+ */
+export const SCRUB_AVATAR_MIN_HA_VERSION = '2026.9.0';
 
 export interface EntityConfig {
   entity: string;

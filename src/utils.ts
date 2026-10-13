@@ -9,6 +9,7 @@ import {
   MAX_HOURS_TO_SHOW,
   MIN_HA_VERSION,
   MIN_HOURS_TO_SHOW,
+  SCRUB_AVATAR_MIN_HA_VERSION,
 } from './types.js';
 
 export const ENTITY_COLORS = [
@@ -147,11 +148,18 @@ export function compareHaVersions(a: string, b: string): number {
   return 0;
 }
 
-/** True when version is >= MIN_HA_VERSION (2026.9.0). */
+/** True when version is >= MIN_HA_VERSION (2024.1.0). */
 export function isHaVersionSupported(
   version: string | undefined | null,
   minimum: string = MIN_HA_VERSION
 ): boolean {
   if (!parseHaVersion(version ?? undefined)) return false;
   return compareHaVersions(String(version), minimum) >= 0;
+}
+
+/** True when scrub avatars (editableLocations) are available (2026.9+). */
+export function isScrubAvatarsSupported(
+  version: string | undefined | null
+): boolean {
+  return isHaVersionSupported(version, SCRUB_AVATAR_MIN_HA_VERSION);
 }

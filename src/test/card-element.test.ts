@@ -122,6 +122,10 @@ describe('TraceOnMapCard element', () => {
     expect(pathArg).toContain(encodeURIComponent('device_tracker.phone'));
     expect(pathArg).not.toContain('zone.home');
 
+    // Full HA: no degrade hint
+    const fullHint = card.shadowRoot!.getElementById('feature-hint');
+    expect(fullHint?.style.display).toBe('none');
+
     const slider = card.shadowRoot!.getElementById('slider') as HTMLInputElement;
     expect(Number(slider.max)).toBeGreaterThan(0);
 
@@ -449,7 +453,7 @@ describe('TraceOnMapCard element', () => {
     play.click();
   });
 
-  it('shows version gate for old HA', async () => {
+  it('shows version gate for HA below 2024.1', async () => {
     mockHaMap();
     const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
       hass: unknown;
@@ -461,14 +465,134 @@ describe('TraceOnMapCard element', () => {
       entities: ['device_tracker.a'],
     });
     card.hass = {
-      config: { version: '2026.8.0' },
+      config: { version: '2023.12.0' },
       states: {},
       callApi: vi.fn(),
     };
     await waitFor(() => {
       const alert = card.shadowRoot!.getElementById('alert');
       expect(alert?.style.display).not.toBe('none');
-      expect(alert?.textContent).toMatch(/2026\.9\.0/);
+      expect(alert?.textContent).toMatch(/2024\.1\.0/);
+    });
+    expect(card.shadowRoot?.querySelector('ha-map')).toBeNull();
+  });
+
+  it.each(['2024.1.0', '2025.5.0', '2026.8.0'] as const)(
+    'degrades scrub avatars but keeps paths on HA %s',
+    async (version) => {
+      mockHaMap();
+      const callApi = vi.fn().mockResolvedValue([
+        [
+          {
+            entity_id: 'device_tracker.phone',
+            state: 'not_home',
+            last_changed: '2026-01-01T10:00:00Z',
+            attributes: { latitude: 1, longitude: 2 },
+          },
+          {
+            entity_id: 'device_tracker.phone',
+            state: 'not_home',
+            last_changed: '2026-01-01T11:00:00Z',
+            attributes: { latitude: 1.1, longitude: 2.1 },
+          },
+          {
+            entity_id: 'device_tracker.phone',
+            state: 'not_home',
+            last_changed: '2026-01-01T12:00:00Z',
+            attributes: { latitude: 1.2, longitude: 2.2 },
+          },
+        ],
+      ]);
+      const card = document.createElement(
+        'trace-on-map-card'
+      ) as TraceOnMapCard & { hass: unknown };
+      document.body.appendChild(card);
+      card.hass = {
+        config: { version },
+        states: {
+          'device_tracker.phone': {
+            entity_id: 'device_tracker.phone',
+            state: 'not_home',
+            attributes: { latitude: 1.2, longitude: 2.2 },
+          },
+        },
+        callApi,
+      };
+      card.setConfig({
+        type: 'custom:trace-on-map-card',
+        range_mode: 'recent',
+        entities: ['device_tracker.phone'],
+        hours_to_show: 24,
+      });
+
+      await waitFor(() => {
+        expect(card.shadowRoot?.querySelector('ha-map')).toBeTruthy();
+        expect(callApi).toHaveBeenCalled();
+      });
+
+      const hint = card.shadowRoot!.getElementById('feature-hint');
+      expect(hint?.style.display).not.toBe('none');
+      expect(hint?.textContent).toMatch(/2026\.9\.0/);
+      expect(hint?.textContent).toContain(version);
+      expect(card.shadowRoot!.getElementById('alert')?.style.display).toBe(
+        'none'
+      );
+
+      const slider = card.shadowRoot!.getElementById(
+        'slider'
+      ) as HTMLInputElement;
+      expect(Number(slider.max)).toBeGreaterThan(0);
+
+      slider.value = '0';
+      slider.dispatchEvent(new Event('input'));
+      slider.dispatchEvent(new Event('change'));
+
+      const map = card.shadowRoot!.querySelector('ha-map') as HTMLElement & {
+        paths: Array<{ points: unknown[] }>;
+        editableLocations: unknown[];
+        entities: Array<{ entity_id: string }>;
+      };
+      expect(map.paths[0].points.length).toBe(1);
+      expect(map.editableLocations).toEqual([]);
+
+      slider.value = '1';
+      slider.dispatchEvent(new Event('input'));
+      slider.dispatchEvent(new Event('change'));
+      expect(map.paths[0].points.length).toBe(2);
+      expect(map.editableLocations).toEqual([]);
+
+      // Live end still restores live entity without scrub markers
+      slider.value = String(slider.max);
+      slider.dispatchEvent(new Event('input'));
+      slider.dispatchEvent(new Event('change'));
+      expect(map.paths[0].points.length).toBe(3);
+      expect(map.editableLocations).toEqual([]);
+      expect(
+        map.entities.some((e) => e.entity_id === 'device_tracker.phone')
+      ).toBe(true);
+    }
+  );
+
+  it('blocks when HA version is missing', async () => {
+    mockHaMap();
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
+      entities: ['device_tracker.a'],
+    });
+    card.hass = {
+      config: {},
+      states: {},
+      callApi: vi.fn(),
+    };
+    await waitFor(() => {
+      const alert = card.shadowRoot!.getElementById('alert');
+      expect(alert?.style.display).not.toBe('none');
+      expect(alert?.textContent).toMatch(/2024\.1\.0/);
     });
     expect(card.shadowRoot?.querySelector('ha-map')).toBeNull();
   });
