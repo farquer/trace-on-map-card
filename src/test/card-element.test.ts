@@ -100,6 +100,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: [
         { entity: 'device_tracker.phone', name: 'Phone', color: '#0288d1' },
         'zone.home',
@@ -244,6 +245,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: [{ entity: 'person.a', color: '#4269d0' }],
       cluster: false,
       hours_to_show: 24,
@@ -310,6 +312,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
     });
     await waitFor(() => {
@@ -374,6 +377,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
       hours_to_show: 48,
       max_timeline_points: 3000,
@@ -426,6 +430,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['device_tracker.phone'],
       aspect_ratio: '16:9',
       title: 'Fleet',
@@ -452,6 +457,7 @@ describe('TraceOnMapCard element', () => {
     document.body.appendChild(card);
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['device_tracker.a'],
     });
     card.hass = {
@@ -500,6 +506,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
       hours_to_show: 24,
     });
@@ -511,6 +518,7 @@ describe('TraceOnMapCard element', () => {
     // Start a second fetch (new token) while first is in flight
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
       hours_to_show: 48,
     });
@@ -569,6 +577,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
     });
     await waitFor(() => {
@@ -602,6 +611,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['zone.home'],
     });
     await waitFor(() => {
@@ -642,6 +652,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
       hours_to_show: 24,
       max_timeline_points: 10,
@@ -691,6 +702,7 @@ describe('TraceOnMapCard element', () => {
     };
     card.setConfig({
       type: 'custom:trace-on-map-card',
+      range_mode: 'recent',
       entities: ['person.a'],
     });
     await waitFor(() => expect(callApi).toHaveBeenCalled());
@@ -703,6 +715,89 @@ describe('TraceOnMapCard element', () => {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     await waitFor(() => {
       expect(map.editableLocations?.[0]?.location).toEqual([1, 2]);
+    });
+  });
+
+  it('defaults to day mode with nav; switches to recent and past day', async () => {
+    mockHaMap();
+    const now = Date.now();
+    const callApi = vi.fn(async (_m: string, path: string) => {
+      const startIso = path.split('history/period/')[1]?.split('?')[0] ?? '';
+      const start = new Date(decodeURIComponent(startIso)).getTime();
+      return [
+        [
+          {
+            entity_id: 'person.a',
+            state: 'not_home',
+            last_changed: new Date(start + 3600_000).toISOString(),
+            attributes: { latitude: 1, longitude: 2 },
+          },
+          {
+            entity_id: 'person.a',
+            state: 'not_home',
+            last_changed: new Date(Math.min(start + 7200_000, now - 1000)).toISOString(),
+            attributes: { latitude: 3, longitude: 4 },
+          },
+        ],
+      ];
+    });
+    const card = document.createElement('trace-on-map-card') as TraceOnMapCard & {
+      hass: unknown;
+    };
+    document.body.appendChild(card);
+    card.hass = {
+      config: { version: '2026.9.3', time_zone: 'Asia/Shanghai' },
+      states: {
+        'person.a': {
+          entity_id: 'person.a',
+          state: 'not_home',
+          attributes: { latitude: 3, longitude: 4 },
+        },
+      },
+      callApi,
+    };
+    card.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+      hours_to_show: 24,
+    });
+
+    await waitFor(() => expect(callApi).toHaveBeenCalled());
+    const dayBtn = card.shadowRoot!.querySelector(
+      '.range-mode-btn[data-mode="day"]'
+    ) as HTMLButtonElement;
+    const recentBtn = card.shadowRoot!.querySelector(
+      '.range-mode-btn[data-mode="recent"]'
+    ) as HTMLButtonElement;
+    const prev = card.shadowRoot!.getElementById(
+      'range-prev'
+    ) as HTMLButtonElement;
+    const next = card.shadowRoot!.getElementById(
+      'range-next'
+    ) as HTMLButtonElement;
+    const label = card.shadowRoot!.getElementById('range-label')!;
+
+    expect(dayBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(next.disabled).toBe(true);
+    expect(prev.disabled).toBe(false);
+    expect(label.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    const callsAfterDay = callApi.mock.calls.length;
+    prev.click();
+    await waitFor(() => {
+      expect(callApi.mock.calls.length).toBeGreaterThan(callsAfterDay);
+      expect(next.disabled).toBe(false);
+    });
+
+    const callsAfterPrev = callApi.mock.calls.length;
+    recentBtn.click();
+    await waitFor(() => {
+      expect(callApi.mock.calls.length).toBeGreaterThan(callsAfterPrev);
+      expect(recentBtn.getAttribute('aria-pressed')).toBe('true');
+      expect(
+        card.shadowRoot!.getElementById('range-nav')!.style.display
+      ).toBe('none');
+      expect(label.textContent).toMatch(/最近 24/);
     });
   });
 });

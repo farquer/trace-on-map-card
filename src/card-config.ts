@@ -3,6 +3,7 @@ import {
   DEFAULT_HOURS_TO_SHOW,
   DEFAULT_ZOOM,
 } from './types.js';
+import { parseRangeMode } from './range-window.js';
 import { clampMaxTimelinePoints } from './timeline-perf.js';
 import {
   clampHours,
@@ -24,6 +25,7 @@ export function normalizeCardConfig(
 ): TraceOnMapCardConfig {
   assertEntitiesPresent(config);
   const maxPts = clampMaxTimelinePoints(config.max_timeline_points);
+  const rangeMode = parseRangeMode(config.range_mode);
   const normalized: TraceOnMapCardConfig = {
     ...config,
     auto_fit: config.auto_fit ?? true,
@@ -33,6 +35,11 @@ export function normalizeCardConfig(
     hours_to_show: clampHours(config.hours_to_show ?? DEFAULT_HOURS_TO_SHOW),
     default_zoom: clampZoom(config.default_zoom ?? DEFAULT_ZOOM),
   };
+  if (rangeMode == null) {
+    delete normalized.range_mode;
+  } else {
+    normalized.range_mode = rangeMode;
+  }
   if (maxPts == null) {
     delete normalized.max_timeline_points;
   } else {

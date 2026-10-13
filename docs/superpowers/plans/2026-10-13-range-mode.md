@@ -36,27 +36,27 @@
 
 **Produces:** `resolveHaTimeZone`, `getDayWindow`, `getWeekWindow`, `getRecentWindow`, `canGoNext`, `clampRangeOffset`, `parseRangeMode`
 
-- [ ] Tests for Shanghai day/week offsets, canGoNext, recent
-- [ ] Implement Intl-based midnight + Monday find
-- [ ] Commit
+- [x] Tests for Shanghai day/week offsets, canGoNext, recent
+- [x] Implement Intl-based midnight + Monday find
+- [x] Commit
 
 ### Task 2: types + config + editor
 
-- [ ] Add `RangeMode`; normalize `range_mode`
-- [ ] Editor select 最近/天/周; hours label note for 最近
-- [ ] Commit
+- [x] Add `RangeMode`; normalize `range_mode`
+- [x] Editor select 最近/天/周; hours label note for 最近
+- [x] Commit
 
 ### Task 3: card toolbar + fetch wiring
 
-- [ ] State `_rangeMode` (default day), `_rangeOffset`
-- [ ] DOM toolbar; CSS HA tokens
-- [ ] `_resolveActiveWindow()` feeds `_fetchHistory`
-- [ ] Mode/nav handlers pause + refetch
-- [ ] Auto-refetch: skip when day/week && offset < 0
-- [ ] Card tests + commit
+- [x] State `_rangeMode` (default day), `_rangeOffset`
+- [x] DOM toolbar; CSS HA tokens
+- [x] `_resolveActiveWindow()` feeds `_fetchHistory`
+- [x] Mode/nav handlers pause + refetch
+- [x] Auto-refetch: skip when day/week && offset < 0
+- [x] Card tests + commit
 
 ### Task 4: README + build + push
 
-- [ ] Docs; `vitest` + build; push
+- [x] Docs; `vitest` + build; push
 
 ---

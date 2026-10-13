@@ -17,6 +17,7 @@ export interface HomeAssistant {
   states: Record<string, HassEntity>;
   config?: {
     version?: string;
+    time_zone?: string;
     [key: string]: unknown;
   };
   hassUrl?: (path: string) => string;
@@ -40,10 +41,18 @@ export interface EntityConfig {
 
 export type ThemeMode = 'auto' | 'light' | 'dark';
 
+/** Initial / config range mode. Runtime default is `day` when omitted. */
+export type RangeMode = 'recent' | 'day' | 'week';
+
 export interface TraceOnMapCardConfig {
   type: string;
   entities: Array<EntityConfig | string>;
   hours_to_show?: number;
+  /**
+   * Optional initial range mode for the card toolbar.
+   * Omit → runtime default `day` (today in HA time zone).
+   */
+  range_mode?: RangeMode;
   /**
    * Soft budget for points per history window. Omit = unlimited (no
    * windowing / downsample). When set, History is lazy-loaded in 24h windows.

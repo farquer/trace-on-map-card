@@ -21,7 +21,8 @@ Home Assistant Lovelace card：在 **HA 默认地图**上展示实体位置历�
 - 时间轴：播放 / 暂停 / 拖动
 - `zones`、`auto_fit`、`fit_zones`、`aspect_ratio`、`theme_mode`、`cluster`
 - UI 配置器
-- `hours_to_show` 默认 24，最大 720
+- 范围模式：最近 / 天 / 周（默认天·当日；按 HA `time_zone`）
+- `hours_to_show` 仅用于「最近」，默认 24，最大 720
 
 ## 安装
 
@@ -51,8 +52,9 @@ entities:
     color: "#0288d1"
   - person.alice
   - zone.home
-hours_to_show: 24
-# max_timeline_points: 3000  # 可选；不写=不限制。大跨度（如 720h）建议设置
+hours_to_show: 24          # 仅「最近」模式使用
+# range_mode: day          # 可选初始模式；不写则打开为天·当日
+# max_timeline_points: 3000  # 可选；不写=不限制。大跨度建议设置
 default_zoom: 14
 auto_fit: true
 fit_zones: false
@@ -66,7 +68,8 @@ aspect_ratio: "16:9"
 | Key | 默认 | 说明 |
 |-----|------|------|
 | `entities` | 必填 | 实体 ID 或 `{entity,name,color}`；可含 `zone.*` |
-| `hours_to_show` | `24` | 历史小时数，范围 1–720 |
+| `hours_to_show` | `24` | 「最近」模式滚动窗口小时数，范围 1–720 |
+| `range_mode` | 打开为 `day` | 可选初始模式：`recent` / `day` / `week`；运行时可在卡片上切换 |
 | `max_timeline_points` | 不限制 | 可选。设置后按 24h 时间窗懒加载 History，单窗超过该点数会均匀降采样；**不写则一次拉全量（与旧行为一致）** |
 | `default_zoom` | `14` | 默认缩放 |
 | `auto_fit` | `true` | 自动缩放到实体 |
@@ -76,7 +79,9 @@ aspect_ratio: "16:9"
 | `aspect_ratio` | — | 如 `16:9`；不设则固定高度 |
 | `title` | — | 标题 |
 
-实际可展示的历史长度还受 Home Assistant **Recorder** 保留策略限制。`hours_to_show: 720` 时建议配置 `max_timeline_points`（例如 `3000`），避免一次拉全量导致卡顿。
+卡片底部可切换 **最近 / 天 / 周**：天、周按 HA `config.time_zone`（缺失则回退浏览器本地时区）对齐日历；周为周一至周日；当日/本周时「›」禁用。若要恢复旧的滚动小时体验，设 `range_mode: recent`。
+
+实际可展示的历史长度还受 Home Assistant **Recorder** 保留策略限制。长跨度（周或 `hours_to_show: 720`）建议配置 `max_timeline_points`（例如 `3000`），避免一次拉全量导致卡顿。
 
 ## 开发
 

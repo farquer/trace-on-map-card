@@ -46,6 +46,23 @@ describe('normalizeCardConfig', () => {
     ).toBeUndefined();
   });
 
+  it('keeps range_mode when valid; omits when invalid', () => {
+    expect(
+      normalizeCardConfig({
+        type: 'custom:trace-on-map-card',
+        entities: ['person.a'],
+        range_mode: 'week',
+      }).range_mode
+    ).toBe('week');
+    expect(
+      normalizeCardConfig({
+        type: 'custom:trace-on-map-card',
+        entities: ['person.a'],
+        range_mode: 'nope' as 'day',
+      }).range_mode
+    ).toBeUndefined();
+  });
+
   it('maps dark_mode to theme_mode', () => {
     const cfg = normalizeCardConfig({
       type: 'custom:trace-on-map-card',

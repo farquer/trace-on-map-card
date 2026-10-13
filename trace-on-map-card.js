@@ -344,7 +344,48 @@ class TraceOnMapCardEditor extends HTMLElement {
         const root = document.createElement('div');
         root.className = 'editor-root';
         root.appendChild(this._textRow('Title', config.title ?? '', (v) => this._update({ title: v || undefined })));
-        root.appendChild(this._numberRow(`Hours to show (1–${MAX_HOURS_TO_SHOW})`, clampHours(config.hours_to_show), MIN_HOURS_TO_SHOW, MAX_HOURS_TO_SHOW, (v) => this._update({ hours_to_show: clampHours(v) })));
+        root.appendChild(this._numberRow(`Hours to show — 最近 mode (1–${MAX_HOURS_TO_SHOW})`, clampHours(config.hours_to_show), MIN_HOURS_TO_SHOW, MAX_HOURS_TO_SHOW, (v) => this._update({ hours_to_show: clampHours(v) })));
+        {
+            const row = document.createElement('div');
+            row.className = 'form-row';
+            const lab = document.createElement('label');
+            lab.textContent = 'Initial range mode';
+            const sel = document.createElement('select');
+            sel.className = 'range-mode';
+            const options = [
+                { value: '', label: 'Default (天)' },
+                { value: 'recent', label: '最近' },
+                { value: 'day', label: '天' },
+                { value: 'week', label: '周' },
+            ];
+            for (const o of options) {
+                const opt = document.createElement('option');
+                opt.value = o.value;
+                opt.textContent = o.label;
+                sel.appendChild(opt);
+            }
+            sel.value = config.range_mode ?? '';
+            sel.addEventListener('change', () => {
+                if (!sel.value) {
+                    const next = { ...this._config };
+                    delete next.range_mode;
+                    this._config = next;
+                    this.dispatchEvent(new CustomEvent('config-changed', {
+                        detail: { config: this._config },
+                        bubbles: true,
+                        composed: true,
+                    }));
+                    this._render();
+                    return;
+                }
+                this._update({
+                    range_mode: sel.value,
+                });
+            });
+            row.appendChild(lab);
+            row.appendChild(sel);
+            root.appendChild(row);
+        }
         root.appendChild(this._optionalNumberRow('Max timeline points (blank = unlimited)', config.max_timeline_points, 1, 100000, (v) => {
             if (v == null) {
                 const next = { ...this._config };
@@ -604,6 +645,161 @@ if (!customElements.get('trace-on-map-card-editor')) {
     customElements.define('trace-on-map-card-editor', TraceOnMapCardEditor);
 }
 
+function parseRangeMode(raw) {
+    if (raw === 'recent' || raw === 'day' || raw === 'week')
+        return raw;
+    return undefined;
+}
+/** Default runtime mode when config omits range_mode. */
+const DEFAULT_RANGE_MODE = 'day';
+function resolveHaTimeZone(timeZone) {
+    if (typeof timeZone === 'string' && timeZone.trim())
+        return timeZone.trim();
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    }
+    catch {
+        return 'UTC';
+    }
+}
+function clampRangeOffset(offset) {
+    if (!Number.isFinite(offset))
+        return 0;
+    return Math.min(0, Math.floor(offset));
+}
+function canGoNext(mode, offset) {
+    if (mode === 'recent')
+        return false;
+    return clampRangeOffset(offset) < 0;
+}
+function canGoPrev(mode) {
+    return mode === 'day' || mode === 'week';
+}
+function getZonedParts(ms, timeZone) {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+    });
+    const parts = fmt.formatToParts(new Date(ms));
+    const get = (type) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+    return {
+        year: get('year'),
+        month: get('month'),
+        day: get('day'),
+        hour: get('hour'),
+        minute: get('minute'),
+        second: get('second'),
+    };
+}
+/**
+ * UTC ms for a wall-clock date/time in `timeZone`.
+ * Iteratively corrects using Intl (handles DST).
+ */
+function zonedWallTimeToUtcMs(year, month, day, hour, minute, second, timeZone) {
+    let utc = Date.UTC(year, month - 1, day, hour, minute, second);
+    for (let i = 0; i < 4; i++) {
+        const p = getZonedParts(utc, timeZone);
+        const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+        const target = Date.UTC(year, month - 1, day, hour, minute, second);
+        const diff = target - asUtc;
+        if (diff === 0)
+            break;
+        utc += diff;
+    }
+    return utc;
+}
+function addCalendarDays(year, month, day, delta) {
+    const utc = Date.UTC(year, month - 1, day + delta);
+    const d = new Date(utc);
+    return {
+        year: d.getUTCFullYear(),
+        month: d.getUTCMonth() + 1,
+        day: d.getUTCDate(),
+    };
+}
+/** Monday=0 … Sunday=6 for the calendar date in TZ. */
+function weekdayMondayIndex(year, month, day, timeZone) {
+    // Noon avoids DST edge when probing weekday
+    const ms = zonedWallTimeToUtcMs(year, month, day, 12, 0, 0, timeZone);
+    const wd = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        weekday: 'short',
+    }).format(new Date(ms));
+    const map = {
+        Mon: 0,
+        Tue: 1,
+        Wed: 2,
+        Thu: 3,
+        Fri: 4,
+        Sat: 5,
+        Sun: 6,
+    };
+    return map[wd] ?? 0;
+}
+function pad2(n) {
+    return String(n).padStart(2, '0');
+}
+function formatYmd(year, month, day) {
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+function formatMd(year, month, day) {
+    return `${pad2(month)}-${pad2(day)}`;
+}
+function getRecentWindow(nowMs, hours) {
+    const h = Math.max(1, Math.floor(hours));
+    const endMs = nowMs;
+    const startMs = nowMs - h * 3600 * 1000;
+    return {
+        startMs,
+        endMs,
+        label: `最近 ${h} 小时`,
+    };
+}
+function getDayWindow(nowMs, timeZone, offset) {
+    const off = clampRangeOffset(offset);
+    const parts = getZonedParts(nowMs, timeZone);
+    const target = addCalendarDays(parts.year, parts.month, parts.day, off);
+    const startMs = zonedWallTimeToUtcMs(target.year, target.month, target.day, 0, 0, 0, timeZone);
+    const next = addCalendarDays(target.year, target.month, target.day, 1);
+    const endMs = zonedWallTimeToUtcMs(next.year, next.month, next.day, 0, 0, 0, timeZone);
+    return {
+        startMs,
+        endMs,
+        label: formatYmd(target.year, target.month, target.day),
+    };
+}
+function getWeekWindow(nowMs, timeZone, offset) {
+    const off = clampRangeOffset(offset);
+    const parts = getZonedParts(nowMs, timeZone);
+    // Shift calendar by offset weeks first via day delta
+    const shifted = addCalendarDays(parts.year, parts.month, parts.day, off * 7);
+    const monIdx = weekdayMondayIndex(shifted.year, shifted.month, shifted.day, timeZone);
+    const monday = addCalendarDays(shifted.year, shifted.month, shifted.day, -monIdx);
+    const startMs = zonedWallTimeToUtcMs(monday.year, monday.month, monday.day, 0, 0, 0, timeZone);
+    const sundayPlus = addCalendarDays(monday.year, monday.month, monday.day, 7);
+    const endMs = zonedWallTimeToUtcMs(sundayPlus.year, sundayPlus.month, sundayPlus.day, 0, 0, 0, timeZone);
+    const sunday = addCalendarDays(monday.year, monday.month, monday.day, 6);
+    return {
+        startMs,
+        endMs,
+        label: `${formatMd(monday.year, monday.month, monday.day)} ~ ${formatMd(sunday.year, sunday.month, sunday.day)}`,
+    };
+}
+function resolveRangeWindow(options) {
+    const { mode, nowMs, timeZone, offset, hoursToShow } = options;
+    if (mode === 'recent')
+        return getRecentWindow(nowMs, hoursToShow);
+    if (mode === 'week')
+        return getWeekWindow(nowMs, timeZone, offset);
+    return getDayWindow(nowMs, timeZone, offset);
+}
+
 const HISTORY_WINDOW_MS = 24 * 3600 * 1000;
 const TIME_SLIDER_MAX = 1000;
 /** Omit / invalid → undefined (unlimited). Else integer ≥ 1. */
@@ -762,6 +958,7 @@ function assertEntitiesPresent(config) {
 function normalizeCardConfig(config) {
     assertEntitiesPresent(config);
     const maxPts = clampMaxTimelinePoints(config.max_timeline_points);
+    const rangeMode = parseRangeMode(config.range_mode);
     const normalized = {
         ...config,
         auto_fit: config.auto_fit ?? true,
@@ -771,6 +968,12 @@ function normalizeCardConfig(config) {
         hours_to_show: clampHours(config.hours_to_show ?? DEFAULT_HOURS_TO_SHOW),
         default_zoom: clampZoom(config.default_zoom ?? DEFAULT_ZOOM),
     };
+    if (rangeMode == null) {
+        delete normalized.range_mode;
+    }
+    else {
+        normalized.range_mode = rangeMode;
+    }
     if (maxPts == null) {
         delete normalized.max_timeline_points;
     }
@@ -1014,6 +1217,8 @@ function shouldAutoRefetchHistory(options) {
     if (options.playing)
         return false;
     if (options.inFlight)
+        return false;
+    if (options.skipForStableRange)
         return false;
     const interval = options.intervalMs ?? 60000;
     if (options.lastFetchedAt <= 0)
@@ -1555,6 +1760,70 @@ const CARD_CSS = `
     background: var(--card-background-color, #fff);
     border-top: 1px solid var(--divider-color, #e0e0e0);
   }
+  .range-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .range-modes {
+    display: flex;
+    gap: 4px;
+  }
+  .range-mode-btn {
+    flex: 1;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--secondary-background-color, #f5f5f5);
+    color: var(--primary-text-color, #212121);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.8em;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+  .range-mode-btn[aria-pressed="true"] {
+    background: var(--primary-color, #03a9f4);
+    color: var(--text-primary-color, #fff);
+    border-color: var(--primary-color, #03a9f4);
+  }
+  .range-mode-btn:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 2px;
+  }
+  .range-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+  }
+  .range-nav-btn {
+    width: 32px;
+    height: 28px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--secondary-background-color, #f5f5f5);
+    color: var(--primary-text-color, #212121);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.95em;
+    line-height: 1;
+    padding: 0;
+  }
+  .range-nav-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .range-nav-btn:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 2px;
+  }
+  .range-label {
+    flex: 1;
+    text-align: center;
+    font-size: 0.8em;
+    font-variant-numeric: tabular-nums;
+    color: var(--secondary-text-color, #727272);
+    min-width: 0;
+  }
   .timeline-controls {
     display: flex;
     align-items: center;
@@ -1692,6 +1961,12 @@ class TraceOnMapCard extends HTMLElement {
         this._playheadTimeMs = 0;
         this._scrubRaf = null;
         this._statusHint = '';
+        this._rangeMode = DEFAULT_RANGE_MODE;
+        this._rangeOffset = 0;
+        this._rangeLabelEl = null;
+        this._rangePrevBtn = null;
+        this._rangeNextBtn = null;
+        this._rangeNavEl = null;
         this._shadow = this.attachShadow({ mode: 'open' });
     }
     static getConfigElement() {
@@ -1706,11 +1981,15 @@ class TraceOnMapCard extends HTMLElement {
     setConfig(config) {
         this._config = normalizeCardConfig(config);
         this._entityColors = assignEntityColors(this._config.entities);
+        this._rangeMode =
+            parseRangeMode(this._config.range_mode) ?? DEFAULT_RANGE_MODE;
+        this._rangeOffset = 0;
         if (this._built) {
             this._playback.pause();
             this._applyAspectRatio();
             this._renderLegend();
             this._updateTitle();
+            this._syncRangeToolbar();
             void this._ensureMap();
             void this._fetchHistory();
             this._scheduleMapResize();
@@ -1733,6 +2012,7 @@ class TraceOnMapCard extends HTMLElement {
                 lastFetchedAt: this._historyFetchedAt,
                 now: Date.now(),
                 inFlight: this._historyInFlight,
+                skipForStableRange: this._rangeMode !== 'recent' && this._rangeOffset < 0,
             })) {
                 void this._fetchHistory();
             }
@@ -1782,6 +2062,18 @@ class TraceOnMapCard extends HTMLElement {
         <div id="map-wrap"><div class="alert" id="alert" style="display:none"></div></div>
         <div class="loading-msg" id="loading" style="display:none"></div>
         <div class="timeline-container">
+          <div class="range-toolbar" id="range-toolbar">
+            <div class="range-modes" role="group" aria-label="Range mode">
+              <button type="button" class="range-mode-btn" data-mode="recent">最近</button>
+              <button type="button" class="range-mode-btn" data-mode="day">天</button>
+              <button type="button" class="range-mode-btn" data-mode="week">周</button>
+            </div>
+            <div class="range-nav" id="range-nav">
+              <button type="button" class="range-nav-btn" id="range-prev" title="Previous">‹</button>
+              <span class="range-label" id="range-label"></span>
+              <button type="button" class="range-nav-btn" id="range-next" title="Next">›</button>
+            </div>
+          </div>
           <div class="timeline-controls">
             <button type="button" class="play-pause-btn" id="play" title="Play history animation"></button>
             <div class="timeline-slider-wrap">
@@ -1804,11 +2096,25 @@ class TraceOnMapCard extends HTMLElement {
         this._sliderEl = this._shadow.getElementById('slider');
         this._playBtn = this._shadow.getElementById('play');
         this._timeLabelEl = this._shadow.getElementById('time-label');
+        this._rangeLabelEl = this._shadow.getElementById('range-label');
+        this._rangePrevBtn = this._shadow.getElementById('range-prev');
+        this._rangeNextBtn = this._shadow.getElementById('range-next');
+        this._rangeNavEl = this._shadow.getElementById('range-nav');
         this._updateTitle();
         this._playBtn.innerHTML = playIcon();
         this._playBtn.addEventListener('click', () => this._playback.toggle());
         this._sliderEl.addEventListener('input', () => this._onSliderInput());
         this._sliderEl.addEventListener('change', () => this._flushSliderScrub());
+        this._shadow.querySelectorAll('.range-mode-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const mode = parseRangeMode(btn.dataset.mode);
+                if (mode)
+                    this._setRangeMode(mode);
+            });
+        });
+        this._rangePrevBtn.addEventListener('click', () => this._goRangePrev());
+        this._rangeNextBtn.addEventListener('click', () => this._goRangeNext());
+        this._syncRangeToolbar();
         this._bindPlayback();
         this._applyAspectRatio();
         this._renderLegend();
@@ -1913,6 +2219,67 @@ class TraceOnMapCard extends HTMLElement {
     _budgetMaxPoints() {
         return this._config?.max_timeline_points;
     }
+    _resolveActiveWindow(nowMs = Date.now()) {
+        const hoursToShow = clampHours(this._config?.hours_to_show);
+        const timeZone = resolveHaTimeZone(typeof this._hass?.config?.time_zone === 'string'
+            ? this._hass.config.time_zone
+            : undefined);
+        return resolveRangeWindow({
+            mode: this._rangeMode,
+            nowMs,
+            timeZone,
+            offset: this._rangeOffset,
+            hoursToShow,
+        });
+    }
+    /** Hours span for path label formatting (fullDatetime threshold). */
+    _windowHours(window) {
+        return Math.max(1, Math.round((window.endMs - window.startMs) / 3600000));
+    }
+    _syncRangeToolbar(window) {
+        const w = window ?? this._resolveActiveWindow();
+        if (this._rangeLabelEl)
+            this._rangeLabelEl.textContent = w.label;
+        this._shadow.querySelectorAll('.range-mode-btn').forEach((btn) => {
+            const mode = btn.dataset.mode;
+            btn.setAttribute('aria-pressed', mode === this._rangeMode ? 'true' : 'false');
+        });
+        if (this._rangeNavEl) {
+            this._rangeNavEl.style.display =
+                this._rangeMode === 'recent' ? 'none' : '';
+        }
+        if (this._rangePrevBtn) {
+            this._rangePrevBtn.disabled = !canGoPrev(this._rangeMode);
+        }
+        if (this._rangeNextBtn) {
+            this._rangeNextBtn.disabled = !canGoNext(this._rangeMode, this._rangeOffset);
+        }
+    }
+    _setRangeMode(mode) {
+        if (mode === this._rangeMode)
+            return;
+        this._rangeMode = mode;
+        this._rangeOffset = 0;
+        this._playback.pause();
+        this._syncRangeToolbar();
+        void this._fetchHistory();
+    }
+    _goRangePrev() {
+        if (!canGoPrev(this._rangeMode))
+            return;
+        this._rangeOffset = clampRangeOffset(this._rangeOffset - 1);
+        this._playback.pause();
+        this._syncRangeToolbar();
+        void this._fetchHistory();
+    }
+    _goRangeNext() {
+        if (!canGoNext(this._rangeMode, this._rangeOffset))
+            return;
+        this._rangeOffset = clampRangeOffset(this._rangeOffset + 1);
+        this._playback.pause();
+        this._syncRangeToolbar();
+        void this._fetchHistory();
+    }
     _setLoadingVisible(visible, text = 'Loading history…') {
         if (!this._loadingEl)
             return;
@@ -1987,9 +2354,10 @@ class TraceOnMapCard extends HTMLElement {
         const token = ++this._fetchToken;
         this._historyInFlight = true;
         this._setLoadingVisible(true);
-        const hoursToShow = clampHours(this._config.hours_to_show);
-        const endMs = Date.now();
-        const startMs = endMs - hoursToShow * 3600 * 1000;
+        const window = this._resolveActiveWindow();
+        this._syncRangeToolbar(window);
+        const hoursToShow = this._windowHours(window);
+        const { startMs, endMs } = window;
         const configs = normalizeEntityConfigs(this._config.entities);
         const entityIdList = historyEntityIds(configs);
         const budget = this._budgetMaxPoints();
@@ -2048,7 +2416,12 @@ class TraceOnMapCard extends HTMLElement {
         this._loadedWindowIds.clear();
         this._timelineStartMs = startMs;
         this._timelineEndMs = endMs;
-        this._timelinePoints = extractTimelinePoints(data, configs);
+        let points = extractTimelinePoints(data, configs);
+        // Day/week: HA history has no end bound — clip to half-open [start, end).
+        if (this._rangeMode !== 'recent') {
+            points = filterPointsInWindow(points, startMs, endMs, false);
+        }
+        this._timelinePoints = points;
         this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, false);
     }
     async _fetchHistoryBudget(token, startMs, endMs, hoursToShow, configs, entityIdList, budget) {

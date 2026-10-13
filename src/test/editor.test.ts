@@ -351,6 +351,38 @@ describe('trace-on-map-card-editor', () => {
     el.remove();
   });
 
+  it('sets and clears range_mode via select', () => {
+    const el = document.createElement(
+      'trace-on-map-card-editor'
+    ) as TraceOnMapCardEditor;
+    document.body.appendChild(el);
+    const events: Array<{ range_mode?: string }> = [];
+    el.addEventListener('config-changed', (e) => {
+      events.push((e as CustomEvent).detail.config);
+    });
+    el.setConfig({
+      type: 'custom:trace-on-map-card',
+      entities: ['person.a'],
+    });
+    const sel = el.shadowRoot!.querySelector(
+      'select.range-mode'
+    ) as HTMLSelectElement;
+    expect(sel).toBeTruthy();
+    expect(sel.value).toBe('');
+
+    sel.value = 'week';
+    sel.dispatchEvent(new Event('change'));
+    expect(events.at(-1)?.range_mode).toBe('week');
+
+    const sel2 = el.shadowRoot!.querySelector(
+      'select.range-mode'
+    ) as HTMLSelectElement;
+    sel2.value = '';
+    sel2.dispatchEvent(new Event('change'));
+    expect(events.at(-1)?.range_mode).toBeUndefined();
+    el.remove();
+  });
+
   it('sets and clears max_timeline_points via optional field', () => {
     const el = document.createElement(
       'trace-on-map-card-editor'

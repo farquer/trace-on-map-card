@@ -21,6 +21,17 @@ import {
 import { applyMapProps, createHaMapElement, resizeHaMap } from './map-host.js';
 import { PlaybackController } from './playback.js';
 import {
+  DEFAULT_RANGE_MODE,
+  canGoNext,
+  canGoPrev,
+  clampRangeOffset,
+  parseRangeMode,
+  resolveHaTimeZone,
+  resolveRangeWindow,
+  type RangeMode,
+  type TimeWindow,
+} from './range-window.js';
+import {
   buildScrubEditableLocations,
   positionsAtTimelineIndex,
 } from './scrub-markers.js';
@@ -105,6 +116,70 @@ const CARD_CSS = `
     padding: 12px 16px 10px;
     background: var(--card-background-color, #fff);
     border-top: 1px solid var(--divider-color, #e0e0e0);
+  }
+  .range-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .range-modes {
+    display: flex;
+    gap: 4px;
+  }
+  .range-mode-btn {
+    flex: 1;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--secondary-background-color, #f5f5f5);
+    color: var(--primary-text-color, #212121);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.8em;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+  .range-mode-btn[aria-pressed="true"] {
+    background: var(--primary-color, #03a9f4);
+    color: var(--text-primary-color, #fff);
+    border-color: var(--primary-color, #03a9f4);
+  }
+  .range-mode-btn:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 2px;
+  }
+  .range-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+  }
+  .range-nav-btn {
+    width: 32px;
+    height: 28px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--secondary-background-color, #f5f5f5);
+    color: var(--primary-text-color, #212121);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.95em;
+    line-height: 1;
+    padding: 0;
+  }
+  .range-nav-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .range-nav-btn:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 2px;
+  }
+  .range-label {
+    flex: 1;
+    text-align: center;
+    font-size: 0.8em;
+    font-variant-numeric: tabular-nums;
+    color: var(--secondary-text-color, #727272);
+    min-width: 0;
   }
   .timeline-controls {
     display: flex;
@@ -244,6 +319,12 @@ class TraceOnMapCard extends HTMLElement {
   private _playheadTimeMs = 0;
   private _scrubRaf: number | null = null;
   private _statusHint = '';
+  private _rangeMode: RangeMode = DEFAULT_RANGE_MODE;
+  private _rangeOffset = 0;
+  private _rangeLabelEl: HTMLElement | null = null;
+  private _rangePrevBtn: HTMLButtonElement | null = null;
+  private _rangeNextBtn: HTMLButtonElement | null = null;
+  private _rangeNavEl: HTMLElement | null = null;
 
   constructor() {
     super();
@@ -265,11 +346,15 @@ class TraceOnMapCard extends HTMLElement {
   setConfig(config: TraceOnMapCardConfig): void {
     this._config = normalizeCardConfig(config);
     this._entityColors = assignEntityColors(this._config.entities);
+    this._rangeMode =
+      parseRangeMode(this._config.range_mode) ?? DEFAULT_RANGE_MODE;
+    this._rangeOffset = 0;
     if (this._built) {
       this._playback.pause();
       this._applyAspectRatio();
       this._renderLegend();
       this._updateTitle();
+      this._syncRangeToolbar();
       void this._ensureMap();
       void this._fetchHistory();
       this._scheduleMapResize();
@@ -293,6 +378,8 @@ class TraceOnMapCard extends HTMLElement {
           lastFetchedAt: this._historyFetchedAt,
           now: Date.now(),
           inFlight: this._historyInFlight,
+          skipForStableRange:
+            this._rangeMode !== 'recent' && this._rangeOffset < 0,
         })
       ) {
         void this._fetchHistory();
@@ -348,6 +435,18 @@ class TraceOnMapCard extends HTMLElement {
         <div id="map-wrap"><div class="alert" id="alert" style="display:none"></div></div>
         <div class="loading-msg" id="loading" style="display:none"></div>
         <div class="timeline-container">
+          <div class="range-toolbar" id="range-toolbar">
+            <div class="range-modes" role="group" aria-label="Range mode">
+              <button type="button" class="range-mode-btn" data-mode="recent">最近</button>
+              <button type="button" class="range-mode-btn" data-mode="day">天</button>
+              <button type="button" class="range-mode-btn" data-mode="week">周</button>
+            </div>
+            <div class="range-nav" id="range-nav">
+              <button type="button" class="range-nav-btn" id="range-prev" title="Previous">‹</button>
+              <span class="range-label" id="range-label"></span>
+              <button type="button" class="range-nav-btn" id="range-next" title="Next">›</button>
+            </div>
+          </div>
           <div class="timeline-controls">
             <button type="button" class="play-pause-btn" id="play" title="Play history animation"></button>
             <div class="timeline-slider-wrap">
@@ -373,12 +472,31 @@ class TraceOnMapCard extends HTMLElement {
     this._timeLabelEl = this._shadow.getElementById(
       'time-label'
     ) as HTMLSpanElement;
+    this._rangeLabelEl = this._shadow.getElementById('range-label');
+    this._rangePrevBtn = this._shadow.getElementById(
+      'range-prev'
+    ) as HTMLButtonElement;
+    this._rangeNextBtn = this._shadow.getElementById(
+      'range-next'
+    ) as HTMLButtonElement;
+    this._rangeNavEl = this._shadow.getElementById('range-nav');
 
     this._updateTitle();
     this._playBtn.innerHTML = playIcon();
     this._playBtn.addEventListener('click', () => this._playback.toggle());
     this._sliderEl.addEventListener('input', () => this._onSliderInput());
     this._sliderEl.addEventListener('change', () => this._flushSliderScrub());
+    this._shadow.querySelectorAll('.range-mode-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = parseRangeMode(
+          (btn as HTMLElement).dataset.mode
+        );
+        if (mode) this._setRangeMode(mode);
+      });
+    });
+    this._rangePrevBtn.addEventListener('click', () => this._goRangePrev());
+    this._rangeNextBtn.addEventListener('click', () => this._goRangeNext());
+    this._syncRangeToolbar();
 
     this._bindPlayback();
     this._applyAspectRatio();
@@ -494,6 +612,80 @@ class TraceOnMapCard extends HTMLElement {
     return this._config?.max_timeline_points;
   }
 
+  private _resolveActiveWindow(nowMs = Date.now()): TimeWindow {
+    const hoursToShow = clampHours(this._config?.hours_to_show);
+    const timeZone = resolveHaTimeZone(
+      typeof this._hass?.config?.time_zone === 'string'
+        ? this._hass.config.time_zone
+        : undefined
+    );
+    return resolveRangeWindow({
+      mode: this._rangeMode,
+      nowMs,
+      timeZone,
+      offset: this._rangeOffset,
+      hoursToShow,
+    });
+  }
+
+  /** Hours span for path label formatting (fullDatetime threshold). */
+  private _windowHours(window: TimeWindow): number {
+    return Math.max(
+      1,
+      Math.round((window.endMs - window.startMs) / 3_600_000)
+    );
+  }
+
+  private _syncRangeToolbar(window?: TimeWindow): void {
+    const w = window ?? this._resolveActiveWindow();
+    if (this._rangeLabelEl) this._rangeLabelEl.textContent = w.label;
+    this._shadow.querySelectorAll('.range-mode-btn').forEach((btn) => {
+      const mode = (btn as HTMLElement).dataset.mode;
+      btn.setAttribute(
+        'aria-pressed',
+        mode === this._rangeMode ? 'true' : 'false'
+      );
+    });
+    if (this._rangeNavEl) {
+      this._rangeNavEl.style.display =
+        this._rangeMode === 'recent' ? 'none' : '';
+    }
+    if (this._rangePrevBtn) {
+      this._rangePrevBtn.disabled = !canGoPrev(this._rangeMode);
+    }
+    if (this._rangeNextBtn) {
+      this._rangeNextBtn.disabled = !canGoNext(
+        this._rangeMode,
+        this._rangeOffset
+      );
+    }
+  }
+
+  private _setRangeMode(mode: RangeMode): void {
+    if (mode === this._rangeMode) return;
+    this._rangeMode = mode;
+    this._rangeOffset = 0;
+    this._playback.pause();
+    this._syncRangeToolbar();
+    void this._fetchHistory();
+  }
+
+  private _goRangePrev(): void {
+    if (!canGoPrev(this._rangeMode)) return;
+    this._rangeOffset = clampRangeOffset(this._rangeOffset - 1);
+    this._playback.pause();
+    this._syncRangeToolbar();
+    void this._fetchHistory();
+  }
+
+  private _goRangeNext(): void {
+    if (!canGoNext(this._rangeMode, this._rangeOffset)) return;
+    this._rangeOffset = clampRangeOffset(this._rangeOffset + 1);
+    this._playback.pause();
+    this._syncRangeToolbar();
+    void this._fetchHistory();
+  }
+
   private _setLoadingVisible(visible: boolean, text = 'Loading history…'): void {
     if (!this._loadingEl) return;
     if (visible) {
@@ -583,9 +775,10 @@ class TraceOnMapCard extends HTMLElement {
     this._historyInFlight = true;
     this._setLoadingVisible(true);
 
-    const hoursToShow = clampHours(this._config.hours_to_show);
-    const endMs = Date.now();
-    const startMs = endMs - hoursToShow * 3600 * 1000;
+    const window = this._resolveActiveWindow();
+    this._syncRangeToolbar(window);
+    const hoursToShow = this._windowHours(window);
+    const { startMs, endMs } = window;
     const configs = normalizeEntityConfigs(this._config.entities);
     const entityIdList = historyEntityIds(configs);
     const budget = this._budgetMaxPoints();
@@ -667,7 +860,12 @@ class TraceOnMapCard extends HTMLElement {
     this._loadedWindowIds.clear();
     this._timelineStartMs = startMs;
     this._timelineEndMs = endMs;
-    this._timelinePoints = extractTimelinePoints(data, configs);
+    let points = extractTimelinePoints(data, configs);
+    // Day/week: HA history has no end bound — clip to half-open [start, end).
+    if (this._rangeMode !== 'recent') {
+      points = filterPointsInWindow(points, startMs, endMs, false);
+    }
+    this._timelinePoints = points;
     this._applyLoadedPoints(hoursToShow, configs, startMs, endMs, false);
   }
 

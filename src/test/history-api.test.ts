@@ -68,4 +68,15 @@ describe('shouldAutoRefetchHistory', () => {
       })
     ).toBe(false);
   });
+
+  it('skips for stable past day/week ranges', () => {
+    expect(
+      shouldAutoRefetchHistory({
+        playing: false,
+        lastFetchedAt: 0,
+        now: 100_000,
+        skipForStableRange: true,
+      })
+    ).toBe(false);
+  });
 });

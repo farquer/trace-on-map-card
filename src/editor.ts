@@ -258,13 +258,56 @@ class TraceOnMapCardEditor extends HTMLElement {
     );
     root.appendChild(
       this._numberRow(
-        `Hours to show (1–${MAX_HOURS_TO_SHOW})`,
+        `Hours to show — 最近 mode (1–${MAX_HOURS_TO_SHOW})`,
         clampHours(config.hours_to_show),
         MIN_HOURS_TO_SHOW,
         MAX_HOURS_TO_SHOW,
         (v) => this._update({ hours_to_show: clampHours(v) })
       )
     );
+    {
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      const lab = document.createElement('label');
+      lab.textContent = 'Initial range mode';
+      const sel = document.createElement('select');
+      sel.className = 'range-mode';
+      const options: Array<{ value: string; label: string }> = [
+        { value: '', label: 'Default (天)' },
+        { value: 'recent', label: '最近' },
+        { value: 'day', label: '天' },
+        { value: 'week', label: '周' },
+      ];
+      for (const o of options) {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        sel.appendChild(opt);
+      }
+      sel.value = config.range_mode ?? '';
+      sel.addEventListener('change', () => {
+        if (!sel.value) {
+          const next = { ...this._config! };
+          delete next.range_mode;
+          this._config = next;
+          this.dispatchEvent(
+            new CustomEvent('config-changed', {
+              detail: { config: this._config },
+              bubbles: true,
+              composed: true,
+            })
+          );
+          this._render();
+          return;
+        }
+        this._update({
+          range_mode: sel.value as 'recent' | 'day' | 'week',
+        });
+      });
+      row.appendChild(lab);
+      row.appendChild(sel);
+      root.appendChild(row);
+    }
     root.appendChild(
       this._optionalNumberRow(
         'Max timeline points (blank = unlimited)',

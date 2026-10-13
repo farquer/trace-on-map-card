@@ -1,4 +1,6 @@
-export type RangeMode = 'recent' | 'day' | 'week';
+import type { RangeMode } from './types.js';
+
+export type { RangeMode };
 
 export interface TimeWindow {
   startMs: number;
